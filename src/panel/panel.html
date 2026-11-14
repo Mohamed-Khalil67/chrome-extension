@@ -36,7 +36,6 @@
           <option value="">None</option>
         </select>
       </div>
-      <button class="btn-ghost" id="btnClearMonitor" title="Clear captured traffic">Clear</button>
     </div>
   </header>
 
@@ -51,32 +50,56 @@
         <span class="live-pill"><span class="pulse-dot"></span> Recording</span>
       </div>
       <div class="metrics-cards">
-        <div class="metric-card">
+        <div class="metric-card" title="Total captured requests in current session">
           <span class="metric-number" id="metricTotalRequests">0</span>
           <span class="metric-label">Requests</span>
         </div>
-        <div class="metric-card">
+        <div class="metric-card" title="HTTP failures (>= 400), application errors, and JS runtime errors">
           <span class="metric-number error" id="metricTotalErrors">0</span>
           <span class="metric-label">Errors</span>
         </div>
-        <div class="metric-card">
+        <div class="metric-card" title="Average response latency">
           <span class="metric-number" id="metricAvgDuration">0ms</span>
-          <span class="metric-label">Avg. time</span>
+          <span class="metric-label">Avg. Time</span>
         </div>
       </div>
     </div>
 
-    <!-- Filter Toolbar with the 5 Explicit Filters -->
+    <!-- Filter Toolbar with Clear, Preserve Log, 5 Pills, and Search -->
     <div class="filter-toolbar">
+      <!-- Clear Traffic Action -->
+      <button class="toolbar-icon-btn" id="btnClearMonitorLog" title="Clear log (Alt+C)">
+        <span class="icon-clear">⊘</span>
+      </button>
+
+      <!-- Preserve Log Checkbox -->
+      <label class="toolbar-checkbox" title="Do not clear requests across page reloads or navigations">
+        <input type="checkbox" id="chkPreserveLog">
+        <span>Preserve log</span>
+      </label>
+
+      <div class="toolbar-divider"></div>
+
+      <!-- 5-Level Category Segmented Pills -->
       <div class="filter-buttons-group">
         <button class="filter-pill active" data-cat="api">API</button>
         <button class="filter-pill" data-cat="document">Documents</button>
         <button class="filter-pill" data-cat="asset">Assets</button>
         <button class="filter-pill" data-cat="all">All</button>
-        <button class="filter-pill" data-cat="error">Errors</button>
+        <button class="filter-pill" data-cat="error">
+          <span>Errors</span>
+          <span class="pill-badge hidden" id="pillErrorsCount">0</span>
+        </button>
       </div>
 
-      <input type="text" id="netSearchInput" class="clean-search" placeholder="Filter by URL, method, status...">
+      <div class="toolbar-divider"></div>
+
+      <!-- Live Search Box with Icon -->
+      <div class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="netSearchInput" class="clean-search" placeholder="Filter by URL, method, status...">
+        <button class="search-clear-btn hidden" id="btnSearchClear" title="Clear search">&times;</button>
+      </div>
 
       <!-- More Filters Popover Toggle -->
       <div class="more-filters-wrapper">
@@ -137,7 +160,14 @@
             </thead>
             <tbody id="netTableBody">
               <tr class="empty-row">
-                <td colspan="5">Waiting for application traffic in inspected tab...</td>
+                <td colspan="5">
+                  <div class="empty-state-card">
+                    <div class="empty-state-icon">⚡</div>
+                    <div class="empty-state-title">Waiting for Application Traffic</div>
+                    <div class="empty-state-subtitle">Reload the inspected tab or trigger API calls in your web application to inspect traffic.</div>
+                    <button class="btn-reload-tab" id="btnEmptyReload">↻ Reload Page</button>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -147,7 +177,11 @@
       <!-- Right Pane: Selected Request Details -->
       <section class="pane-detail" id="requestDetailPane">
         <div class="detail-placeholder" id="detailPlaceholder">
-          Select a request on the left to inspect its headers, payload, and response.
+          <div class="empty-detail-graphic">
+            <span class="empty-detail-icon">🔍</span>
+            <div class="empty-detail-title">No Request Selected</div>
+            <div class="empty-detail-subtitle">Click any captured request on the left to inspect its headers, payload, and response bodies.</div>
+          </div>
         </div>
 
         <div class="detail-container hidden" id="detailContainer">

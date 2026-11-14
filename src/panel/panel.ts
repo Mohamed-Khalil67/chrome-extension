@@ -48,6 +48,7 @@ export class PanelController {
   private filterMethod: string = '';
   private filterStatus: string = '';
   private hideCached: boolean = false;
+  private preserveLog: boolean = false;
 
   // API Client state
   private openTabs: RequestItem[] = [];
@@ -59,6 +60,8 @@ export class PanelController {
     this.setupEventListeners();
     await this.loadWorkspaceData();
     this.initDefaultWorkspaceTab();
+    this.updateMonitorMetrics();
+    this.renderRequestsTable();
     this.listenToDevToolsMessages();
   }
 
@@ -78,6 +81,14 @@ export class PanelController {
       this.savedRequests = await storage.getRequests();
       this.environments = await storage.getEnvironments();
       this.history = await storage.getHistory(50);
+
+      // Load preserveLog state
+      try {
+        const pLog = localStorage.getItem('frontend_lens_preserve_log');
+        if (pLog !== null) this.preserveLog = pLog === 'true';
+      } catch {
+        this.preserveLog = false;
+      }
 
       // Load expanded state from localStorage
       try {
@@ -130,16 +141,25 @@ export class PanelController {
     btnNavMonitor?.addEventListener('click', () => this.switchToScreen('monitor'));
     btnNavWorkspace?.addEventListener('click', () => this.switchToScreen('workspace'));
 
-    // Clear monitor
-    document.getElementById('btnClearMonitor')?.addEventListener('click', () => {
-      this.requests = [];
-      this.selectedRequestId = null;
-      this.runtimeErrors = [];
-      this.updateMonitorMetrics();
-      this.renderRequestsTable();
-      this.renderRequestDetail();
-      this.renderErrorsDrawer();
+    // Clear monitor buttons (toolbar and top bar)
+    document.getElementById('btnClearMonitorLog')?.addEventListener('click', () => {
+      this.clearMonitorTraffic();
     });
+    document.getElementById('btnClearMonitor')?.addEventListener('click', () => {
+      this.clearMonitorTraffic();
+    });
+
+    // Preserve Log Checkbox
+    const chkPreserveLog = document.getElementById('chkPreserveLog') as HTMLInputElement;
+    if (chkPreserveLog) {
+      chkPreserveLog.checked = this.preserveLog;
+      chkPreserveLog.addEventListener('change', () => {
+        this.preserveLog = chkPreserveLog.checked;
+        try {
+          localStorage.setItem('frontend_lens_preserve_log', String(this.preserveLog));
+        } catch {}
+      });
+    }
 
     // Dismiss errors
     document.getElementById('btnDismissErrors')?.addEventListener('click', () => {
@@ -159,9 +179,35 @@ export class PanelController {
       });
     });
 
-    // Search filter
+    // Search filter with clear button
     const searchInput = document.getElementById('netSearchInput') as HTMLInputElement;
-    searchInput?.addEventListener('input', () => this.renderRequestsTable());
+    const searchClearBtn = document.getElementById('btnSearchClear');
+
+    searchInput?.addEventListener('input', () => {
+      if (searchInput.value.trim()) {
+        searchClearBtn?.classList.remove('hidden');
+      } else {
+        searchClearBtn?.classList.add('hidden');
+      }
+      this.renderRequestsTable();
+    });
+
+    searchClearBtn?.addEventListener('click', () => {
+      if (searchInput) searchInput.value = '';
+      searchClearBtn.classList.add('hidden');
+      this.renderRequestsTable();
+      searchInput?.focus();
+    });
+
+    // Keyboard shortcuts: Alt+C to clear traffic
+    document.addEventListener('keydown', (e) => {
+      if ((e.altKey && e.key.toLowerCase() === 'c') || (e.ctrlKey && e.key.toLowerCase() === 'l')) {
+        if (this.activeScreen === 'monitor') {
+          e.preventDefault();
+          this.clearMonitorTraffic();
+        }
+      }
+    });
 
     // More Filters Menu
     const btnMoreFilters = document.getElementById('btnToggleMoreFilters');
@@ -463,12 +509,74 @@ export class PanelController {
       });
     }
 
+    // Support window messages for testing and page bridge
+    window.addEventListener('message', (ev) => {
+      if (ev.data && typeof ev.data === 'object') {
+        if (ev.data.type === 'FRONTEND_LENS_NETWORK_REQUEST') {
+          this.handleCapturedRequest(ev.data.data as CapturedNetworkRequest);
+        } else if (ev.data.type === 'FRONTEND_LENS_RUNTIME_ERROR') {
+          this.handleCapturedError(ev.data.data as CapturedJsError);
+        } else if (ev.data.type === 'FRONTEND_LENS_PAGE_NAVIGATED') {
+          this.handlePageNavigated(ev.data.url as string);
+        }
+      }
+    });
+
     if (typeof chrome !== 'undefined' && chrome.devtools && chrome.devtools.network) {
       chrome.devtools.network.onRequestFinished.addListener(async (req) => {
         const adapted = await DevToolsNetworkAdapter.adaptHarRequest(req, this.tabId);
         this.handleCapturedRequest(adapted);
       });
+
+      // Listen for page navigation and reload events
+      chrome.devtools.network.onNavigated.addListener((url: string) => {
+        this.handlePageNavigated(url);
+      });
     }
+  }
+
+  private handlePageNavigated(url: string): void {
+    if (!this.preserveLog) {
+      // By default, refresh cleanly on every reload / navigation
+      this.clearMonitorTraffic();
+    } else {
+      // If user checked "Preserve log", insert a reload / navigation divider
+      const navItem: CapturedNetworkRequest = {
+        id: `nav_${Date.now()}`,
+        tabId: this.tabId,
+        timestamp: Date.now(),
+        method: 'NAV',
+        url: url,
+        pathname: url,
+        resourceType: 'document',
+        category: 'document',
+        status: 0,
+        statusText: 'Navigated',
+        duration: 0,
+        size: 0,
+        mimeType: 'text/html',
+        isCached: false,
+        requestHeaders: [],
+        responseHeaders: [],
+        isJson: false,
+        isHtml: true,
+        statusClassification: 'success',
+        isNavigationDivider: true,
+        navigatedUrl: url
+      };
+      this.requests.unshift(navItem);
+      this.renderRequestsTable();
+    }
+  }
+
+  private clearMonitorTraffic(): void {
+    this.requests = [];
+    this.selectedRequestId = null;
+    this.runtimeErrors = [];
+    this.updateMonitorMetrics();
+    this.renderRequestsTable();
+    this.renderRequestDetail();
+    this.renderErrorsDrawer();
   }
 
   private handleCapturedRequest(req: CapturedNetworkRequest): void {
@@ -493,20 +601,37 @@ export class PanelController {
     const totalRequestsEl = document.getElementById('metricTotalRequests');
     const totalErrorsEl = document.getElementById('metricTotalErrors');
     const avgDurationEl = document.getElementById('metricAvgDuration');
+    const pillErrorsCountEl = document.getElementById('pillErrorsCount');
 
-    const totalRequests = this.requests.length;
-    const httpErrors = this.requests.filter(r => (r.status >= 400 && r.status !== 304) || r.statusClassification === 'app-failure' || r.status === 0).length;
+    // Exclude navigation dividers from request count
+    const actualRequests = this.requests.filter(r => !r.isNavigationDivider);
+    const totalRequests = actualRequests.length;
+    const httpErrors = actualRequests.filter(r => (r.status >= 400 && r.status !== 304) || r.statusClassification === 'app-failure' || r.status === 0).length;
     const totalErrors = httpErrors + this.runtimeErrors.length;
 
     let avgDuration = 0;
     if (totalRequests > 0) {
-      const sum = this.requests.reduce((acc, r) => acc + r.duration, 0);
+      const sum = actualRequests.reduce((acc, r) => acc + r.duration, 0);
       avgDuration = Math.round(sum / totalRequests);
     }
 
     if (totalRequestsEl) totalRequestsEl.textContent = String(totalRequests);
-    if (totalErrorsEl) totalErrorsEl.textContent = String(totalErrors);
+    if (totalErrorsEl) {
+      totalErrorsEl.textContent = String(totalErrors);
+      if (totalErrors > 0) totalErrorsEl.classList.add('error');
+      else totalErrorsEl.classList.remove('error');
+    }
     if (avgDurationEl) avgDurationEl.textContent = `${avgDuration}ms`;
+
+    // Update pill badge on "Errors" filter pill
+    if (pillErrorsCountEl) {
+      pillErrorsCountEl.textContent = String(totalErrors);
+      if (totalErrors > 0) {
+        pillErrorsCountEl.classList.remove('hidden');
+      } else {
+        pillErrorsCountEl.classList.add('hidden');
+      }
+    }
   }
 
   private renderErrorsDrawer(): void {
@@ -537,6 +662,12 @@ export class PanelController {
     if (!tbody) return;
 
     const filtered = this.requests.filter(r => {
+      // If it is a navigation divider, always display unless search filter hides it
+      if (r.isNavigationDivider) {
+        if (searchFilter && !r.url.toLowerCase().includes(searchFilter)) return false;
+        return true;
+      }
+
       // 1. Primary Category Filter
       if (this.activeFilterCategory === 'api' && r.category !== 'api') return false;
       if (this.activeFilterCategory === 'document' && r.category !== 'document') return false;
@@ -571,12 +702,44 @@ export class PanelController {
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="5">${this.requests.length === 0 ? 'Waiting for application traffic in inspected tab...' : 'No matching requests for selected filter.'}</td></tr>`;
+      const isFilterActive = !!(searchFilter || this.filterMethod || this.filterStatus || this.hideCached || this.activeFilterCategory !== 'api');
+      tbody.innerHTML = `
+        <tr class="empty-row">
+          <td colspan="5">
+            <div class="empty-state-card">
+              <div class="empty-state-icon">⚡</div>
+              <div class="empty-state-title">${isFilterActive ? 'No Matching Requests' : 'Waiting for Application Traffic'}</div>
+              <div class="empty-state-subtitle">${isFilterActive ? 'No captured requests match your current filters. Try selecting a different filter pill or clearing the search.' : 'Reload the inspected tab or trigger API calls in your web application to inspect traffic.'}</div>
+              ${!isFilterActive ? '<button class="btn-reload-tab" id="btnEmptyReload">↻ Reload Page</button>' : ''}
+            </div>
+          </td>
+        </tr>
+      `;
+
+      tbody.querySelector('#btnEmptyReload')?.addEventListener('click', () => {
+        if (typeof chrome !== 'undefined' && chrome.devtools && chrome.devtools.inspectedWindow) {
+          chrome.devtools.inspectedWindow.reload({});
+        } else {
+          window.location.reload();
+        }
+      });
       return;
     }
 
     tbody.innerHTML = '';
     filtered.forEach(r => {
+      if (r.isNavigationDivider) {
+        const tr = document.createElement('tr');
+        tr.className = 'nav-divider-row';
+        tr.innerHTML = `
+          <td colspan="5">
+            <span class="nav-divider-badge">⟳ Reload / Navigated to ${r.navigatedUrl || r.url}</span>
+          </td>
+        `;
+        tbody.appendChild(tr);
+        return;
+      }
+
       const tr = document.createElement('tr');
       if (r.id === this.selectedRequestId) tr.classList.add('selected');
 
@@ -593,12 +756,14 @@ export class PanelController {
       else if (r.status === 304) statusDisplay = '304 (Cache)';
       else if (r.status === 0) statusDisplay = 'FAIL';
 
+      const methodClass = `tree-method-${r.method.toLowerCase()}`;
+
       tr.innerHTML = `
         <td><span class="status-badge ${badgeClass}">${statusDisplay}</span></td>
-        <td><span class="method-tag">${r.method}</span></td>
-        <td title="${r.url}">${r.pathname || r.url}</td>
+        <td><span class="tree-method-tag ${methodClass}">${r.method}</span></td>
+        <td title="${r.url}" class="req-url-cell"><span class="req-path">${r.pathname || r.url}</span></td>
         <td><span class="type-tag">${r.resourceType}</span></td>
-        <td class="time-tag">${r.duration} ms</td>
+        <td class="time-tag ${r.duration > 1000 ? 'time-slow' : ''}">${r.duration} ms</td>
       `;
 
       tr.onclick = () => {

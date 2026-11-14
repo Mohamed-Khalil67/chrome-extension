@@ -46,6 +46,8 @@ export interface CapturedNetworkRequest {
   htmlDiagnosis?: HtmlDiagnosisResult;
   statusClassification: StatusClassification;
   applicationErrorMessage?: string;
+  isNavigationDivider?: boolean;
+  navigatedUrl?: string;
 }
 
 export interface CapturedJsError {
