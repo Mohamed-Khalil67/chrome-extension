@@ -1,5 +1,13 @@
 import YAML from 'yaml';
-import { Collection, HttpMethod, KeyValuePair, RequestItem } from '../models/workspace';
+import {
+  Collection,
+  CollectionFolder,
+  CollectionNode,
+  CollectionRequest,
+  HttpMethod,
+  KeyValuePair,
+  RequestItem
+} from '../models/workspace';
 
 interface OpenApiOperation {
   summary?: string;
@@ -49,14 +57,6 @@ export class OpenApiImporter {
     const collectionId = `col_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const collectionName = info.title || 'OpenAPI Import';
 
-    const collection: Collection = {
-      id: collectionId,
-      name: collectionName,
-      description: info.description,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-
     // Determine base URL
     let baseUrl = '{{baseUrl}}';
     if (Array.isArray(spec.servers) && spec.servers.length > 0) {
@@ -69,9 +69,11 @@ export class OpenApiImporter {
       baseUrl = `${scheme}://${spec.host}${typeof spec.basePath === 'string' ? spec.basePath.replace(/\/$/, '') : ''}`;
     }
 
-    const requests: RequestItem[] = [];
-    const paths = (spec.paths as Record<string, Record<string, OpenApiOperation>>) || {};
+    const allRequests: RequestItem[] = [];
+    const folderGroups = new Map<string, CollectionRequest[]>();
+    const rootRequests: CollectionRequest[] = [];
 
+    const paths = (spec.paths as Record<string, Record<string, OpenApiOperation>>) || {};
     const validMethods = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
 
     for (const [pathStr, pathItem] of Object.entries(paths)) {
@@ -83,8 +85,20 @@ export class OpenApiImporter {
 
         const method = lowerMethod.toUpperCase() as HttpMethod;
         const summary = op.summary || op.operationId || `${method} ${pathStr}`;
-        const tag = Array.isArray(op.tags) && op.tags.length > 0 ? `[${op.tags[0]}] ` : '';
-        const name = `${tag}${summary}`;
+
+        // Determine Folder: tag first, then logical path segment
+        let folderName: string | null = null;
+        if (Array.isArray(op.tags) && op.tags.length > 0 && op.tags[0]?.trim()) {
+          folderName = op.tags[0].trim();
+        } else {
+          // Path grouping: e.g. /api/v1/users/{id} -> 'Users'
+          const segments = pathStr.split('/').filter(s => s && !s.startsWith('{') && !s.startsWith(':'));
+          const meaningful = segments.filter(s => !['api', 'v1', 'v2', 'v3'].includes(s.toLowerCase()));
+          if (meaningful.length > 0) {
+            const raw = meaningful[0]!;
+            folderName = raw.charAt(0).toUpperCase() + raw.slice(1);
+          }
+        }
 
         // Path / URL
         let finalPath = pathStr;
@@ -109,7 +123,6 @@ export class OpenApiImporter {
                 enabled: true
               });
             } else if (p.in === 'path') {
-              // Convert {id} to :id or placeholder
               finalPath = finalPath.replace(`{${p.name}}`, defaultVal || `:${p.name}`);
             }
           }
@@ -125,7 +138,6 @@ export class OpenApiImporter {
           if (jsonContent.example !== undefined) {
             bodyRaw = JSON.stringify(jsonContent.example, null, 2);
           } else if (jsonContent.schema) {
-            // Build simple mock JSON from schema properties
             const props = (jsonContent.schema.properties as Record<string, { type?: string; example?: unknown }>) || {};
             const mockObj: Record<string, unknown> = {};
             for (const [k, v] of Object.entries(props)) {
@@ -138,10 +150,10 @@ export class OpenApiImporter {
 
         const fullUrl = `${baseUrl}${finalPath.startsWith('/') ? finalPath : '/' + finalPath}`;
 
-        requests.push({
+        const reqItem: RequestItem = {
           id: `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           collectionId,
-          name,
+          name: summary,
           method,
           url: fullUrl,
           headers,
@@ -154,14 +166,58 @@ export class OpenApiImporter {
           executionMode: 'inspected-page',
           createdAt: Date.now(),
           updatedAt: Date.now()
-        });
+        };
+
+        allRequests.push(reqItem);
+
+        const reqNode: CollectionRequest = {
+          id: reqItem.id,
+          name: reqItem.name,
+          type: 'request',
+          method: reqItem.method,
+          request: reqItem
+        };
+
+        if (folderName) {
+          if (!folderGroups.has(folderName)) {
+            folderGroups.set(folderName, []);
+          }
+          folderGroups.get(folderName)!.push(reqNode);
+        } else {
+          rootRequests.push(reqNode);
+        }
       }
     }
 
-    if (requests.length === 0) {
+    if (allRequests.length === 0) {
       throw new Error('No valid API path operations found in OpenAPI specification');
     }
 
-    return { collection, requests };
+    const treeNodes: CollectionNode[] = [];
+
+    // Add folder groups
+    for (const [fName, fRequests] of folderGroups.entries()) {
+      const folderNode: CollectionFolder = {
+        id: `fld_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        name: fName,
+        type: 'folder',
+        children: fRequests
+      };
+      treeNodes.push(folderNode);
+    }
+
+    // Add root requests
+    treeNodes.push(...rootRequests);
+
+    const collection: Collection = {
+      id: collectionId,
+      name: collectionName,
+      description: info.description,
+      children: treeNodes,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+
+    return { collection, requests: allRequests };
   }
 }

@@ -7,12 +7,16 @@ import { PostmanImporter } from '../core/importers/postman.importer';
 import { CapturedJsError, CapturedNetworkRequest, ResourceCategory } from '../core/models/debugger';
 import {
   Collection,
+  CollectionFolder,
+  CollectionNode,
+  CollectionRequest,
   Environment,
   HttpMethod,
   KeyValuePair,
   RequestHistoryItem,
   RequestItem
 } from '../core/models/workspace';
+import { CollectionTreeService } from '../core/services/collection-tree.service';
 import { Redactor } from '../core/security/redactor';
 import { storage } from '../core/storage/indexed-db';
 import { JsonViewer } from './components/json-viewer';
@@ -25,6 +29,16 @@ export class PanelController {
   private collections: Collection[] = [];
   private savedRequests: RequestItem[] = [];
   private history: RequestHistoryItem[] = [];
+
+  // Tree state
+  private expandedNodeIds: Set<string> = new Set();
+  private treeSearchQuery: string = '';
+  private contextTarget: {
+    colId: string;
+    nodeId?: string;
+    nodeType: 'collection' | 'folder' | 'request';
+    nodeName: string;
+  } | null = null;
 
   // Monitor state
   private requests: CapturedNetworkRequest[] = [];
@@ -64,6 +78,40 @@ export class PanelController {
       this.savedRequests = await storage.getRequests();
       this.environments = await storage.getEnvironments();
       this.history = await storage.getHistory(50);
+
+      // Load expanded state from localStorage
+      try {
+        const raw = localStorage.getItem('frontend_lens_expanded');
+        if (raw) {
+          this.expandedNodeIds = new Set(JSON.parse(raw));
+        }
+      } catch {
+        this.expandedNodeIds = new Set();
+      }
+
+      // Normalize & migrate collections without children
+      for (const col of this.collections) {
+        if (!col.children || col.children.length === 0) {
+          const childReqs = this.savedRequests.filter(r => r.collectionId === col.id);
+          if (childReqs.length > 0) {
+            col.children = childReqs.map(r => ({
+              id: r.id,
+              name: r.name,
+              type: 'request',
+              method: r.method,
+              request: r
+            }));
+            await storage.saveCollection(col);
+          } else {
+            col.children = [];
+          }
+        }
+      }
+
+      // Default expand all collections if initial state is empty
+      if (this.expandedNodeIds.size === 0) {
+        this.collections.forEach(c => this.expandedNodeIds.add(c.id));
+      }
 
       this.renderEnvironmentsDropdown();
       this.renderCollectionsSidebar();
@@ -323,20 +371,52 @@ export class PanelController {
       this.activeEnv = this.environments.find(e => e.id === envSelect.value) || null;
     });
 
+    // Collection Tree Search Input
+    const treeSearchInput = document.getElementById('treeSearchInput') as HTMLInputElement;
+    treeSearchInput?.addEventListener('input', () => {
+      this.treeSearchQuery = treeSearchInput.value;
+      this.renderCollectionsSidebar();
+    });
+
+    // Expand / Collapse All Tree
+    document.getElementById('btnExpandAllTree')?.addEventListener('click', () => {
+      this.expandAllTreeNodes();
+    });
+
+    document.getElementById('btnCollapseAllTree')?.addEventListener('click', () => {
+      this.collapseAllTreeNodes();
+    });
+
     // New Collection button
     document.getElementById('btnCreateCollection')?.addEventListener('click', () => {
-      const name = prompt('Collection Name:');
-      if (name && name.trim()) {
-        const col: Collection = {
-          id: `col_${Date.now()}`,
-          name: name.trim(),
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-        storage.saveCollection(col).then(() => {
-          this.collections.push(col);
-          this.renderCollectionsSidebar();
-        });
+      this.handleCreateCollection();
+    });
+
+    // Context Menu item actions
+    document.getElementById('ctxAddRequest')?.addEventListener('click', () => {
+      this.handleContextAddRequest();
+    });
+    document.getElementById('ctxAddFolder')?.addEventListener('click', () => {
+      this.handleContextAddFolder();
+    });
+    document.getElementById('ctxRenameNode')?.addEventListener('click', () => {
+      this.handleContextRename();
+    });
+    document.getElementById('ctxDeleteNode')?.addEventListener('click', () => {
+      this.handleContextDelete();
+    });
+
+    // Dismiss context menu on click or Escape
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('treeContextMenu');
+      if (menu && !menu.contains(e.target as Node)) {
+        this.hideContextMenu();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        this.hideContextMenu();
       }
     });
 
@@ -998,57 +1078,492 @@ export class PanelController {
     }
   }
 
-  // --- Collections, History, Environments Rendering ---
-  private renderCollectionsSidebar(): void {
-    const list = document.getElementById('collectionsItemsList')!;
-    if (this.collections.length === 0) {
-      list.innerHTML = '<div class="empty-state">No collections yet. Click Import or + New Collection.</div>';
-      return;
+  // --- Tree State Persistence & Expansion ---
+  private saveExpandedState(): void {
+    try {
+      localStorage.setItem('frontend_lens_expanded', JSON.stringify(Array.from(this.expandedNodeIds)));
+    } catch {
+      // Ignore in restricted environments
     }
-    list.innerHTML = '';
-    this.collections.forEach(col => {
-      const item = document.createElement('div');
-      item.className = 'sidebar-item';
-      item.innerHTML = `
-        <div class="item-title-row">📁 <strong>${col.name}</strong></div>
-        <button class="btn-micro" style="color:#ef4444;">&times;</button>
-      `;
-      item.querySelector('button')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (confirm(`Delete collection "${col.name}"?`)) {
-          storage.deleteCollection(col.id).then(() => {
-            this.collections = this.collections.filter(c => c.id !== col.id);
-            this.renderCollectionsSidebar();
-          });
-        }
-      });
+  }
 
-      // Click collection header to load requests
-      item.onclick = () => {
-        const reqs = this.savedRequests.filter(r => r.collectionId === col.id);
-        if (reqs.length > 0) {
-          this.addNewWorkspaceTab(reqs[0]);
+  private expandAllTreeNodes(): void {
+    for (const col of this.collections) {
+      this.expandedNodeIds.add(col.id);
+      if (col.children) {
+        CollectionTreeService.collectAllFolderIds(col.children).forEach(id => this.expandedNodeIds.add(id));
+      }
+    }
+    this.saveExpandedState();
+    this.renderCollectionsSidebar();
+  }
+
+  private collapseAllTreeNodes(): void {
+    this.expandedNodeIds.clear();
+    this.saveExpandedState();
+    this.renderCollectionsSidebar();
+  }
+
+  // --- Modal Prompt Helper ---
+  private showTreePrompt(title: string, label: string, defaultValue: string = ''): Promise<string | null> {
+    return new Promise((resolve) => {
+      const modal = document.getElementById('modalTreePrompt') as HTMLDialogElement;
+      const titleEl = document.getElementById('treePromptTitle')!;
+      const labelEl = document.getElementById('treePromptLabel')!;
+      const inputEl = document.getElementById('treePromptInput') as HTMLInputElement;
+      const btnConfirm = document.getElementById('btnConfirmTreePrompt') as HTMLButtonElement;
+      const btnCancel = document.getElementById('btnCancelTreePrompt') as HTMLButtonElement;
+
+      titleEl.textContent = title;
+      labelEl.textContent = label;
+      inputEl.value = defaultValue;
+
+      const cleanup = () => {
+        btnConfirm.onclick = null;
+        btnCancel.onclick = null;
+        inputEl.onkeydown = null;
+      };
+
+      btnConfirm.onclick = () => {
+        const val = inputEl.value.trim();
+        cleanup();
+        modal.close();
+        resolve(val || null);
+      };
+
+      btnCancel.onclick = () => {
+        cleanup();
+        modal.close();
+        resolve(null);
+      };
+
+      inputEl.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          btnConfirm.click();
+        } else if (e.key === 'Escape') {
+          btnCancel.click();
         }
       };
 
-      list.appendChild(item);
-
-      // Render children requests under this collection
-      const childReqs = this.savedRequests.filter(r => r.collectionId === col.id);
-      childReqs.forEach(cr => {
-        const childItem = document.createElement('div');
-        childItem.className = 'sidebar-item';
-        childItem.style.paddingLeft = '20px';
-        childItem.innerHTML = `
-          <div class="item-title-row">
-            <span class="method-tag">${cr.method}</span>
-            <span>${cr.name}</span>
-          </div>
-        `;
-        childItem.onclick = () => this.addNewWorkspaceTab(cr);
-        list.appendChild(childItem);
-      });
+      modal.showModal();
+      inputEl.focus();
+      inputEl.select();
     });
+  }
+
+  // --- Context Menu & Tree Actions ---
+  private async handleCreateCollection(): Promise<void> {
+    const name = await this.showTreePrompt('Create Collection', 'Collection Name:');
+    if (!name) return;
+
+    const col: Collection = {
+      id: `col_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name,
+      children: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+
+    await storage.saveCollection(col);
+    this.collections.push(col);
+    this.expandedNodeIds.add(col.id);
+    this.saveExpandedState();
+    this.renderCollectionsSidebar();
+  }
+
+  private async handleContextAddFolder(): Promise<void> {
+    if (!this.contextTarget) return;
+    const target = { ...this.contextTarget };
+    this.hideContextMenu();
+
+    const name = await this.showTreePrompt('Create Folder', 'Folder Name:');
+    if (!name) return;
+
+    const col = this.collections.find(c => c.id === target.colId);
+    if (!col) return;
+    col.children = col.children || [];
+
+    const newFolder: CollectionFolder = {
+      id: `fld_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name,
+      type: 'folder',
+      children: []
+    };
+
+    const parentFolderId = target.nodeType === 'folder' ? target.nodeId || null : null;
+    CollectionTreeService.insertNode(col.children, parentFolderId, newFolder);
+    await storage.saveCollection(col);
+
+    if (parentFolderId) this.expandedNodeIds.add(parentFolderId);
+    this.expandedNodeIds.add(col.id);
+    this.expandedNodeIds.add(newFolder.id);
+    this.saveExpandedState();
+    this.renderCollectionsSidebar();
+  }
+
+  private async handleContextAddRequest(): Promise<void> {
+    if (!this.contextTarget) return;
+    const target = { ...this.contextTarget };
+    this.hideContextMenu();
+
+    const name = await this.showTreePrompt('Create Request', 'Request Name:', 'New Request');
+    if (!name) return;
+
+    const col = this.collections.find(c => c.id === target.colId);
+    if (!col) return;
+    col.children = col.children || [];
+
+    const newReq: RequestItem = {
+      id: `req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      collectionId: col.id,
+      name,
+      method: 'GET',
+      url: 'https://jsonplaceholder.typicode.com/todos/1',
+      headers: [],
+      params: [],
+      auth: { type: 'none' },
+      body: { type: 'none' },
+      executionMode: 'inspected-page',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+
+    const reqNode: CollectionRequest = {
+      id: newReq.id,
+      name: newReq.name,
+      type: 'request',
+      method: newReq.method,
+      request: newReq
+    };
+
+    const parentFolderId = target.nodeType === 'folder' ? target.nodeId || null : null;
+    CollectionTreeService.insertNode(col.children, parentFolderId, reqNode);
+    await storage.saveCollection(col);
+    await storage.saveRequest(newReq);
+    this.savedRequests.push(newReq);
+
+    if (parentFolderId) this.expandedNodeIds.add(parentFolderId);
+    this.expandedNodeIds.add(col.id);
+    this.saveExpandedState();
+
+    this.addNewWorkspaceTab(newReq);
+    this.renderCollectionsSidebar();
+  }
+
+  private async handleContextRename(): Promise<void> {
+    if (!this.contextTarget) return;
+    const target = { ...this.contextTarget };
+    this.hideContextMenu();
+
+    const newName = await this.showTreePrompt('Rename', 'New Name:', target.nodeName);
+    if (!newName || newName === target.nodeName) return;
+
+    const col = this.collections.find(c => c.id === target.colId);
+    if (!col) return;
+
+    if (target.nodeType === 'collection') {
+      col.name = newName;
+      col.updatedAt = Date.now();
+      await storage.saveCollection(col);
+    } else {
+      col.children = col.children || [];
+      CollectionTreeService.renameNode(col.children, target.nodeId!, newName);
+      col.updatedAt = Date.now();
+      await storage.saveCollection(col);
+
+      if (target.nodeType === 'request') {
+        const req = this.savedRequests.find(r => r.id === target.nodeId);
+        if (req) {
+          req.name = newName;
+          await storage.saveRequest(req);
+        }
+        const tab = this.openTabs.find(t => t.id === target.nodeId);
+        if (tab) {
+          tab.name = newName;
+          this.renderWorkspaceTabs();
+        }
+      }
+    }
+
+    this.renderCollectionsSidebar();
+  }
+
+  private async handleContextDelete(): Promise<void> {
+    if (!this.contextTarget) return;
+    const target = { ...this.contextTarget };
+    this.hideContextMenu();
+
+    if (!confirm(`Are you sure you want to delete "${target.nodeName}"?`)) return;
+
+    if (target.nodeType === 'collection') {
+      await storage.deleteCollection(target.colId);
+      this.collections = this.collections.filter(c => c.id !== target.colId);
+    } else {
+      const col = this.collections.find(c => c.id === target.colId);
+      if (!col) return;
+      col.children = col.children || [];
+      CollectionTreeService.removeNode(col.children, target.nodeId!);
+      col.updatedAt = Date.now();
+      await storage.saveCollection(col);
+    }
+
+    this.renderCollectionsSidebar();
+  }
+
+  private openContextMenu(
+    e: MouseEvent,
+    target: { colId: string; nodeId?: string; nodeType: 'collection' | 'folder' | 'request'; nodeName: string }
+  ): void {
+    this.contextTarget = target;
+    const menu = document.getElementById('treeContextMenu');
+    if (!menu) return;
+
+    const itemAddReq = document.getElementById('ctxAddRequest');
+    const itemAddFld = document.getElementById('ctxAddFolder');
+
+    if (target.nodeType === 'request') {
+      itemAddReq?.classList.add('hidden');
+      itemAddFld?.classList.add('hidden');
+    } else {
+      itemAddReq?.classList.remove('hidden');
+      itemAddFld?.classList.remove('hidden');
+    }
+
+    menu.classList.remove('hidden');
+
+    const menuWidth = 170;
+    const menuHeight = 160;
+    let x = e.clientX;
+    let y = e.clientY;
+
+    if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
+    if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
+
+    menu.style.left = `${Math.max(8, x)}px`;
+    menu.style.top = `${Math.max(8, y)}px`;
+  }
+
+  private hideContextMenu(): void {
+    const menu = document.getElementById('treeContextMenu');
+    menu?.classList.add('hidden');
+    this.contextTarget = null;
+  }
+
+  // --- Collections Sidebar Recursive Tree Rendering ---
+  private renderCollectionsSidebar(): void {
+    const container = document.getElementById('collectionsItemsList');
+    if (!container) return;
+
+    if (this.collections.length === 0) {
+      container.innerHTML = '<div class="empty-state">No collections yet. Click Import or + New.</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    const hasSearch = !!this.treeSearchQuery.trim();
+
+    for (const col of this.collections) {
+      const colChildren = col.children || [];
+
+      // Check if collection matches search
+      let displayNodes = colChildren;
+      if (hasSearch) {
+        const { filteredNodes } = CollectionTreeService.filterTree(colChildren, this.treeSearchQuery);
+        const colNameMatches = col.name.toLowerCase().includes(this.treeSearchQuery.toLowerCase());
+        if (!colNameMatches && filteredNodes.length === 0) {
+          continue;
+        }
+        if (!colNameMatches) {
+          displayNodes = filteredNodes;
+        }
+      }
+
+      const isExpanded = hasSearch ? true : this.expandedNodeIds.has(col.id);
+
+      // Render Collection Root Row
+      const colRow = document.createElement('div');
+      colRow.className = 'tree-node-row';
+      colRow.style.paddingLeft = '6px';
+
+      const chevron = document.createElement('span');
+      chevron.className = `tree-chevron ${isExpanded ? 'expanded' : ''}`;
+      chevron.textContent = '▶';
+      chevron.onclick = (e) => {
+        e.stopPropagation();
+        if (this.expandedNodeIds.has(col.id)) {
+          this.expandedNodeIds.delete(col.id);
+        } else {
+          this.expandedNodeIds.add(col.id);
+        }
+        this.saveExpandedState();
+        this.renderCollectionsSidebar();
+      };
+
+      const icon = document.createElement('span');
+      icon.className = 'tree-icon';
+      icon.textContent = '📦';
+
+      const label = document.createElement('span');
+      label.className = 'tree-label';
+      label.innerHTML = `<strong>${col.name}</strong>`;
+
+      const triggerBtn = document.createElement('button');
+      triggerBtn.className = 'tree-actions-trigger';
+      triggerBtn.textContent = '•••';
+      triggerBtn.title = 'Collection Actions';
+      triggerBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.openContextMenu(e, { colId: col.id, nodeType: 'collection', nodeName: col.name });
+      };
+
+      colRow.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openContextMenu(e, { colId: col.id, nodeType: 'collection', nodeName: col.name });
+      };
+
+      colRow.onclick = () => {
+        if (this.expandedNodeIds.has(col.id)) {
+          this.expandedNodeIds.delete(col.id);
+        } else {
+          this.expandedNodeIds.add(col.id);
+        }
+        this.saveExpandedState();
+        this.renderCollectionsSidebar();
+      };
+
+      colRow.appendChild(chevron);
+      colRow.appendChild(icon);
+      colRow.appendChild(label);
+      colRow.appendChild(triggerBtn);
+      container.appendChild(colRow);
+
+      // Render Child Nodes if expanded
+      if (isExpanded) {
+        this.renderTreeNodes(displayNodes, 1, col.id, container, hasSearch);
+      }
+    }
+
+    if (container.children.length === 0 && hasSearch) {
+      container.innerHTML = '<div class="empty-state">No matching requests or folders found.</div>';
+    }
+  }
+
+  private renderTreeNodes(
+    nodes: CollectionNode[],
+    depth: number,
+    colId: string,
+    container: HTMLElement,
+    isSearchActive: boolean
+  ): void {
+    const activeTab = this.getActiveTab();
+
+    for (const node of nodes) {
+      if (node.type === 'folder') {
+        const isFolderExpanded = isSearchActive ? true : this.expandedNodeIds.has(node.id);
+
+        const folderRow = document.createElement('div');
+        folderRow.className = 'tree-node-row';
+        folderRow.style.paddingLeft = `${depth * 16 + 6}px`;
+
+        const chevron = document.createElement('span');
+        chevron.className = `tree-chevron ${isFolderExpanded ? 'expanded' : ''}`;
+        chevron.textContent = '▶';
+        chevron.onclick = (e) => {
+          e.stopPropagation();
+          if (this.expandedNodeIds.has(node.id)) {
+            this.expandedNodeIds.delete(node.id);
+          } else {
+            this.expandedNodeIds.add(node.id);
+          }
+          this.saveExpandedState();
+          this.renderCollectionsSidebar();
+        };
+
+        const icon = document.createElement('span');
+        icon.className = 'tree-icon';
+        icon.textContent = isFolderExpanded ? '📂' : '📁';
+
+        const label = document.createElement('span');
+        label.className = 'tree-label';
+        label.textContent = node.name;
+
+        const triggerBtn = document.createElement('button');
+        triggerBtn.className = 'tree-actions-trigger';
+        triggerBtn.textContent = '•••';
+        triggerBtn.title = 'Folder Actions';
+        triggerBtn.onclick = (e) => {
+          e.stopPropagation();
+          this.openContextMenu(e, { colId, nodeId: node.id, nodeType: 'folder', nodeName: node.name });
+        };
+
+        folderRow.oncontextmenu = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.openContextMenu(e, { colId, nodeId: node.id, nodeType: 'folder', nodeName: node.name });
+        };
+
+        folderRow.onclick = () => {
+          if (this.expandedNodeIds.has(node.id)) {
+            this.expandedNodeIds.delete(node.id);
+          } else {
+            this.expandedNodeIds.add(node.id);
+          }
+          this.saveExpandedState();
+          this.renderCollectionsSidebar();
+        };
+
+        folderRow.appendChild(chevron);
+        folderRow.appendChild(icon);
+        folderRow.appendChild(label);
+        folderRow.appendChild(triggerBtn);
+        container.appendChild(folderRow);
+
+        if (isFolderExpanded && Array.isArray(node.children)) {
+          this.renderTreeNodes(node.children, depth + 1, colId, container, isSearchActive);
+        }
+      } else if (node.type === 'request') {
+        const reqRow = document.createElement('div');
+        const isSelected = (activeTab && activeTab.id === node.request.id) || (activeTab && activeTab.url === node.request.url && activeTab.method === node.request.method);
+        reqRow.className = `tree-node-row ${isSelected ? 'active' : ''}`;
+        reqRow.style.paddingLeft = `${depth * 16 + 22}px`;
+
+        const methodBadge = document.createElement('span');
+        methodBadge.className = `tree-method-tag tree-method-${node.method.toLowerCase()}`;
+        methodBadge.textContent = node.method;
+
+        const label = document.createElement('span');
+        label.className = 'tree-label';
+        label.textContent = node.name;
+        label.title = `${node.method} ${node.request.url}`;
+
+        const triggerBtn = document.createElement('button');
+        triggerBtn.className = 'tree-actions-trigger';
+        triggerBtn.textContent = '•••';
+        triggerBtn.title = 'Request Actions';
+        triggerBtn.onclick = (e) => {
+          e.stopPropagation();
+          this.openContextMenu(e, { colId, nodeId: node.id, nodeType: 'request', nodeName: node.name });
+        };
+
+        reqRow.oncontextmenu = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.openContextMenu(e, { colId, nodeId: node.id, nodeType: 'request', nodeName: node.name });
+        };
+
+        reqRow.onclick = () => {
+          this.addNewWorkspaceTab(node.request);
+          this.renderCollectionsSidebar();
+        };
+
+        reqRow.appendChild(methodBadge);
+        reqRow.appendChild(label);
+        reqRow.appendChild(triggerBtn);
+        container.appendChild(reqRow);
+      }
+    }
   }
 
   private renderHistorySidebar(): void {
@@ -1183,6 +1698,24 @@ export class PanelController {
 
       await storage.saveRequest(newReq);
       this.savedRequests.push(newReq);
+
+      if (colId) {
+        const col = this.collections.find(c => c.id === colId);
+        if (col) {
+          col.children = col.children || [];
+          col.children.push({
+            id: newReq.id,
+            name: newReq.name,
+            type: 'request',
+            method: newReq.method,
+            request: newReq
+          });
+          await storage.saveCollection(col);
+          this.expandedNodeIds.add(col.id);
+          this.saveExpandedState();
+        }
+      }
+
       this.addNewWorkspaceTab(newReq);
       this.renderCollectionsSidebar();
       modal.close();
@@ -1202,6 +1735,30 @@ export class PanelController {
     const idx = this.savedRequests.findIndex(r => r.id === tab.id);
     if (idx >= 0) this.savedRequests[idx] = tab;
     else this.savedRequests.push(tab);
+
+    if (tab.collectionId) {
+      const col = this.collections.find(c => c.id === tab.collectionId);
+      if (col) {
+        col.children = col.children || [];
+        const existing = CollectionTreeService.findNode(col.children, tab.id);
+        if (existing && existing.type === 'request') {
+          existing.name = tab.name;
+          existing.method = tab.method;
+          existing.request = { ...tab };
+        } else if (!existing) {
+          col.children.push({
+            id: tab.id,
+            name: tab.name,
+            type: 'request',
+            method: tab.method,
+            request: { ...tab }
+          });
+        }
+        await storage.saveCollection(col);
+        this.expandedNodeIds.add(col.id);
+        this.saveExpandedState();
+      }
+    }
 
     this.renderWorkspaceTabs();
     this.renderCollectionsSidebar();

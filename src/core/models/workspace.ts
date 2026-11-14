@@ -43,11 +43,29 @@ export interface RequestItem {
   updatedAt: number;
 }
 
+export interface CollectionFolder {
+  id: string;
+  name: string;
+  type: 'folder';
+  children: CollectionNode[];
+}
+
+export interface CollectionRequest {
+  id: string;
+  name: string;
+  type: 'request';
+  method: HttpMethod;
+  request: RequestItem;
+}
+
+export type CollectionNode = CollectionFolder | CollectionRequest;
+
 export interface Collection {
   id: string;
   name: string;
   description?: string;
   parentId?: string;
+  children?: CollectionNode[];
   createdAt: number;
   updatedAt: number;
 }

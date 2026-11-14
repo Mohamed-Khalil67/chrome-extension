@@ -53,6 +53,12 @@ test('PostmanImporter parses collections, folders, and request properties', () =
   const { collection, requests } = PostmanImporter.parse(postmanJson);
   assert.equal(collection.name, 'Test Postman Collection');
   assert.equal(requests.length, 2);
+  assert.ok(collection.children);
+  assert.equal(collection.children.length, 2);
+  assert.equal(collection.children[0]!.type, 'folder');
+  assert.equal(collection.children[0]!.name, 'Auth Folder');
+  assert.equal(collection.children[1]!.type, 'request');
+  assert.equal(collection.children[1]!.name, 'Get Products');
 
   const loginReq = requests.find(r => r.name.includes('Login User'))!;
   assert.equal(loginReq.method, 'POST');
@@ -95,6 +101,9 @@ test('OpenApiImporter parses OpenAPI JSON specification', () => {
   const { collection, requests } = OpenApiImporter.parse(openApiJson);
   assert.equal(collection.name, 'Petstore API');
   assert.equal(requests.length, 2);
+  assert.ok(collection.children);
+  assert.equal(collection.children[0]!.type, 'folder');
+  assert.equal(collection.children[0]!.name, 'Pets');
 
   const getReq = requests.find(r => r.method === 'GET')!;
   assert.equal(getReq.url, 'https://petstore.example.com/api/pets');

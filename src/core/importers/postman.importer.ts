@@ -1,4 +1,12 @@
-import { Collection, HttpMethod, KeyValuePair, RequestItem } from '../models/workspace';
+import {
+  Collection,
+  CollectionFolder,
+  CollectionNode,
+  CollectionRequest,
+  HttpMethod,
+  KeyValuePair,
+  RequestItem
+} from '../models/workspace';
 
 interface PostmanItem {
   name: string;
@@ -41,22 +49,23 @@ export class PostmanImporter {
     const collectionId = `col_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const collectionName = postman.info?.name || 'Imported Postman Collection';
 
-    const collection: Collection = {
-      id: collectionId,
-      name: collectionName,
-      description: postman.info?.description,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
+    const allRequests: RequestItem[] = [];
 
-    const requests: RequestItem[] = [];
+    const parseItems = (items: PostmanItem[]): CollectionNode[] => {
+      const nodes: CollectionNode[] = [];
 
-    const traverse = (items: PostmanItem[], folderPrefix: string = '') => {
       for (const it of items) {
         if (it.item && Array.isArray(it.item)) {
-          // Folder
-          const nextPrefix = folderPrefix ? `${folderPrefix} / ${it.name}` : it.name;
-          traverse(it.item, nextPrefix);
+          // Nested Folder
+          const folderId = `fld_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          const childNodes = parseItems(it.item);
+          const folderNode: CollectionFolder = {
+            id: folderId,
+            name: it.name || 'Folder',
+            type: 'folder',
+            children: childNodes
+          };
+          nodes.push(folderNode);
         } else if (it.request) {
           // Request
           const req = it.request;
@@ -122,12 +131,10 @@ export class PostmanImporter {
             }
           }
 
-          const displayName = folderPrefix ? `[${folderPrefix}] ${it.name}` : it.name;
-
-          requests.push({
+          const reqItem: RequestItem = {
             id: `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             collectionId,
-            name: displayName,
+            name: it.name || 'Unnamed Request',
             method,
             url: rawUrl,
             headers,
@@ -140,13 +147,36 @@ export class PostmanImporter {
             executionMode: 'inspected-page',
             createdAt: Date.now(),
             updatedAt: Date.now()
-          });
+          };
+
+          allRequests.push(reqItem);
+
+          const reqNode: CollectionRequest = {
+            id: reqItem.id,
+            name: reqItem.name,
+            type: 'request',
+            method: reqItem.method,
+            request: reqItem
+          };
+
+          nodes.push(reqNode);
         }
       }
+
+      return nodes;
     };
 
-    traverse(postman.item);
+    const treeNodes = parseItems(postman.item);
 
-    return { collection, requests };
+    const collection: Collection = {
+      id: collectionId,
+      name: collectionName,
+      description: postman.info?.description,
+      children: treeNodes,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+
+    return { collection, requests: allRequests };
   }
 }

@@ -1128,3 +1128,224 @@ body {
   gap: 10px;
   margin-top: 10px;
 }
+
+/* --- API Client Collection Tree View --- */
+.tree-search-wrapper {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tree-search-input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 11px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.tree-search-input:focus {
+  border-color: var(--border-focus);
+}
+
+.tree-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background-color: var(--bg-app);
+}
+
+.tree-toolbar-right {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-tree-tool {
+  font-size: 10px;
+  padding: 2px 6px;
+  color: var(--text-secondary);
+}
+
+.btn-tree-tool:hover {
+  color: var(--text-primary);
+}
+
+.collection-tree-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.tree-node-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding-right: 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 1px 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+
+.tree-node-row:hover {
+  background-color: var(--bg-hover);
+}
+
+.tree-node-row.active {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  font-weight: 500;
+}
+
+.tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.tree-chevron:hover {
+  color: var(--text-primary);
+}
+
+.tree-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.tree-chevron.hidden {
+  visibility: hidden;
+}
+
+.tree-icon {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tree-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.tree-method-tag {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  line-height: 1.3;
+}
+
+.tree-method-get {
+  color: #34d399;
+  background-color: rgba(52, 211, 153, 0.15);
+}
+
+.tree-method-post {
+  color: #60a5fa;
+  background-color: rgba(96, 165, 250, 0.15);
+}
+
+.tree-method-put {
+  color: #fbbf24;
+  background-color: rgba(251, 191, 36, 0.15);
+}
+
+.tree-method-patch {
+  color: #a78bfa;
+  background-color: rgba(167, 139, 250, 0.15);
+}
+
+.tree-method-delete {
+  color: #f87171;
+  background-color: rgba(248, 113, 113, 0.15);
+}
+
+.tree-method-head,
+.tree-method-options {
+  color: #9ca3af;
+  background-color: rgba(156, 163, 175, 0.15);
+}
+
+.tree-actions-trigger {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  line-height: 1;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.tree-node-row:hover .tree-actions-trigger {
+  display: inline-block;
+}
+
+.tree-actions-trigger:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
+}
+
+/* Context Menu */
+.tree-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px 0;
+  min-width: 160px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.ctx-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.1s;
+}
+
+.ctx-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.ctx-divider {
+  height: 1px;
+  background-color: var(--border-subtle);
+  margin: 4px 0;
+}
+
+.ctx-danger {
+  color: #f87171;
+}
+
+.ctx-danger:hover {
+  background-color: rgba(239, 68, 68, 0.15);
+}

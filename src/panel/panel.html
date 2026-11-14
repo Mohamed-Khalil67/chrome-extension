@@ -244,11 +244,18 @@
 
         <!-- Collections -->
         <div class="sidebar-panel active" id="secCollections">
-          <div class="sidebar-panel-header">
-            <button class="btn-micro" id="btnCreateCollection">+ New Collection</button>
+          <div class="tree-search-wrapper">
+            <input type="text" class="tree-search-input" id="treeSearchInput" placeholder="Search requests & folders...">
           </div>
-          <div class="items-list" id="collectionsItemsList">
-            <div class="empty-state">No collections yet. Click Import or + New Collection.</div>
+          <div class="sidebar-panel-header tree-toolbar">
+            <button class="btn-micro" id="btnCreateCollection">+ New</button>
+            <div class="tree-toolbar-right">
+              <button class="btn-micro btn-tree-tool" id="btnExpandAllTree" title="Expand All">⊞ Expand</button>
+              <button class="btn-micro btn-tree-tool" id="btnCollapseAllTree" title="Collapse All">⊟ Collapse</button>
+            </div>
+          </div>
+          <div class="items-list collection-tree-container" id="collectionsItemsList">
+            <div class="empty-state">No collections yet. Click Import or + New.</div>
           </div>
         </div>
 
@@ -463,6 +470,30 @@
       <div class="modal-actions">
         <button class="btn-ghost" id="btnCancelEnv">Cancel</button>
         <button class="btn-send" id="btnSaveEnv">Save</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Context Menu for Collection Tree -->
+  <div id="treeContextMenu" class="tree-context-menu hidden">
+    <div class="ctx-item" id="ctxAddRequest">➕ Add Request</div>
+    <div class="ctx-item" id="ctxAddFolder">📁 Add Folder</div>
+    <div class="ctx-divider"></div>
+    <div class="ctx-item" id="ctxRenameNode">✏️ Rename</div>
+    <div class="ctx-item ctx-danger" id="ctxDeleteNode">🗑️ Delete</div>
+  </div>
+
+  <!-- Prompt Modal for Folder / Request / Collection naming -->
+  <dialog class="clean-modal" id="modalTreePrompt">
+    <div class="modal-box" style="max-width: 420px;">
+      <h2 class="modal-title" id="treePromptTitle">Enter Name</h2>
+      <div class="form-group" style="margin-top: 12px;">
+        <label id="treePromptLabel" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: block;">Name:</label>
+        <input type="text" id="treePromptInput" class="form-input" placeholder="Name">
+      </div>
+      <div class="modal-actions" style="margin-top: 16px;">
+        <button class="btn-ghost" id="btnCancelTreePrompt">Cancel</button>
+        <button class="btn-send" id="btnConfirmTreePrompt">Confirm</button>
       </div>
     </div>
   </dialog>
