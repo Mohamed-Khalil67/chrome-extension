@@ -11,10 +11,6 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-title">Frontend Lens</span>
-      <span class="status-indicator">
-        <span class="status-dot"></span>
-        <span id="tabTargetDisplay">Connected</span>
-      </span>
     </div>
 
     <!-- The Only Two Main Sections -->
@@ -28,15 +24,6 @@
         <span class="nav-text">API Client</span>
       </button>
     </nav>
-
-    <div class="top-actions">
-      <div class="env-chip">
-        <span class="env-label">Env:</span>
-        <select id="activeEnvSelect" class="clean-select">
-          <option value="">None</option>
-        </select>
-      </div>
-    </div>
   </header>
 
   <!-- ============================================== -->
@@ -316,10 +303,18 @@
 
       <!-- Main Request Editor & Runner -->
       <section class="client-main">
-        <!-- Request Tabs Bar -->
-        <div class="request-tabs-strip" id="requestTabsStrip">
-          <!-- Dynamic Tabs -->
-          <button class="add-tab-btn" id="btnAddRequestTab" title="New Request">+</button>
+        <!-- Request Tabs Bar with Environment Selector -->
+        <div class="workspace-tabs-bar">
+          <div class="request-tabs-strip" id="requestTabsStrip">
+            <!-- Dynamic Tabs -->
+            <button class="add-tab-btn" id="btnAddRequestTab" title="New Request">+</button>
+          </div>
+          <div class="workspace-env-wrapper" title="Select active environment variables">
+            <span class="env-label">Env:</span>
+            <select id="activeEnvSelect" class="clean-select">
+              <option value="">No Environment</option>
+            </select>
+          </div>
         </div>
 
         <!-- Address & Action Bar -->
@@ -445,6 +440,17 @@
       </div>
 
       <div class="import-body">
+        <!-- URL Import Section -->
+        <div class="import-url-section">
+          <label class="import-section-label" for="importUrlInput">Import from URL or Postman Documenter Link:</label>
+          <div class="import-url-row">
+            <input type="text" id="importUrlInput" class="clean-search import-url-input" placeholder="e.g. https://documenter.getpostman.com/view/5709532/2s93JqTRWN or direct spec URL">
+            <button class="btn-ghost" id="btnFetchUrlImport" title="Fetch collection from URL">Fetch &amp; Import</button>
+          </div>
+        </div>
+
+        <div class="import-divider"><span>or import from file / raw text</span></div>
+
         <div class="file-picker-row">
           <label class="btn-ghost file-upload-label">
             📁 Choose File (.json, .yaml)

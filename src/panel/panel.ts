@@ -68,10 +68,6 @@ export class PanelController {
   private detectTabContext(): void {
     if (typeof chrome !== 'undefined' && chrome.devtools && chrome.devtools.inspectedWindow) {
       this.tabId = chrome.devtools.inspectedWindow.tabId;
-      const targetDisplay = document.getElementById('tabTargetDisplay');
-      if (targetDisplay) {
-        targetDisplay.textContent = `Tab: ${this.tabId}`;
-      }
     }
   }
 
@@ -368,6 +364,17 @@ export class PanelController {
 
     document.getElementById('btnConfirmImport')?.addEventListener('click', () => {
       this.executeImport();
+    });
+
+    // URL Import Actions
+    document.getElementById('btnFetchUrlImport')?.addEventListener('click', () => {
+      this.executeUrlImport();
+    });
+    document.getElementById('importUrlInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.executeUrlImport();
+      }
     });
 
     // Import Tabs
@@ -1184,9 +1191,88 @@ export class PanelController {
     const modal = document.getElementById('modalImport') as HTMLDialogElement;
     const errorBanner = document.getElementById('importErrorBanner')!;
     const textarea = document.getElementById('importTextarea') as HTMLTextAreaElement;
+    const urlInput = document.getElementById('importUrlInput') as HTMLInputElement;
     errorBanner.classList.add('hidden');
-    textarea.value = '';
+    if (textarea) textarea.value = '';
+    if (urlInput) urlInput.value = '';
     modal.showModal();
+  }
+
+  private async executeUrlImport(): Promise<void> {
+    const urlInput = document.getElementById('importUrlInput') as HTMLInputElement;
+    const errorBanner = document.getElementById('importErrorBanner')!;
+    const btnFetch = document.getElementById('btnFetchUrlImport') as HTMLButtonElement;
+    const modal = document.getElementById('modalImport') as HTMLDialogElement;
+    const url = urlInput?.value.trim();
+
+    if (!url) {
+      errorBanner.textContent = 'Please enter a valid URL or Postman Documenter link.';
+      errorBanner.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      errorBanner.classList.add('hidden');
+      if (btnFetch) {
+        btnFetch.disabled = true;
+        btnFetch.textContent = 'Fetching...';
+      }
+
+      const content = await PostmanImporter.fetchFromUrl(url);
+
+      if (this.activeImportTab === 'impOpenApi' || content.includes('openapi') || content.includes('swagger')) {
+        const { collection, requests } = OpenApiImporter.parse(content);
+        await this.saveImportedCollection(collection, requests);
+      } else {
+        const { collection, requests, environment } = PostmanImporter.parse(content);
+        await this.saveImportedCollection(collection, requests, environment);
+      }
+
+      urlInput.value = '';
+      modal.close();
+    } catch (err: unknown) {
+      errorBanner.textContent = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
+      errorBanner.classList.remove('hidden');
+    } finally {
+      if (btnFetch) {
+        btnFetch.disabled = false;
+        btnFetch.textContent = 'Fetch & Import';
+      }
+    }
+  }
+
+  private async saveImportedCollection(
+    collection: Collection,
+    requests: RequestItem[],
+    environment?: Environment
+  ): Promise<void> {
+    await storage.saveCollection(collection);
+    this.collections.push(collection);
+
+    for (const req of requests) {
+      await storage.saveRequest(req);
+      this.savedRequests.push(req);
+    }
+
+    if (environment) {
+      await storage.saveEnvironment(environment);
+      this.environments.push(environment);
+      this.activeEnv = environment;
+      this.renderEnvironmentsDropdown();
+      this.renderEnvironmentsSidebar();
+    }
+
+    // Auto-expand the newly imported collection and its folders so they are immediately visible
+    this.expandedNodeIds.add(collection.id);
+    if (collection.children) {
+      CollectionTreeService.collectAllFolderIds(collection.children).forEach(id => this.expandedNodeIds.add(id));
+    }
+    this.saveExpandedState();
+
+    this.renderCollectionsSidebar();
+    if (requests.length > 0) {
+      this.addNewWorkspaceTab(requests[0]);
+    }
   }
 
   private async executeImport(): Promise<void> {
@@ -1205,25 +1291,11 @@ export class PanelController {
       errorBanner.classList.add('hidden');
 
       if (this.activeImportTab === 'impPostman') {
-        const { collection, requests } = PostmanImporter.parse(content);
-        await storage.saveCollection(collection);
-        this.collections.push(collection);
-        for (const req of requests) {
-          await storage.saveRequest(req);
-          this.savedRequests.push(req);
-        }
-        this.renderCollectionsSidebar();
-        if (requests.length > 0) this.addNewWorkspaceTab(requests[0]);
+        const { collection, requests, environment } = PostmanImporter.parse(content);
+        await this.saveImportedCollection(collection, requests, environment);
       } else if (this.activeImportTab === 'impOpenApi') {
         const { collection, requests } = OpenApiImporter.parse(content);
-        await storage.saveCollection(collection);
-        this.collections.push(collection);
-        for (const req of requests) {
-          await storage.saveRequest(req);
-          this.savedRequests.push(req);
-        }
-        this.renderCollectionsSidebar();
-        if (requests.length > 0) this.addNewWorkspaceTab(requests[0]);
+        await this.saveImportedCollection(collection, requests);
       } else if (this.activeImportTab === 'impCurl') {
         const parsed = CurlImporter.parse(content);
         this.addNewWorkspaceTab(parsed);

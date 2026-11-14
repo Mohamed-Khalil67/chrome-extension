@@ -156,3 +156,52 @@ test('EnvironmentImporter parses Postman and simple environment JSON', () => {
   const env2 = EnvironmentImporter.parse(simpleEnv);
   assert.equal(env2.variables.length, 2);
 });
+
+test('PostmanImporter parses complex auth objects, variables, and reconstructs URLs', () => {
+  const complexPostman = JSON.stringify({
+    info: {
+      name: 'Complex E-commerce App',
+      description: 'Test complex collection'
+    },
+    variable: [
+      { key: 'baseUrl', value: 'https://ecommerce.example.com' },
+      { key: 'token', value: 'secret-token-123' }
+    ],
+    item: [
+      {
+        name: 'Cart (v2)',
+        item: [
+          {
+            name: 'Add Product To Cart (v2)',
+            request: {
+              method: 'POST',
+              auth: {
+                type: 'bearer',
+                bearer: {
+                  basicConfig: [{ key: 'token', value: '<token>' }]
+                }
+              },
+              url: {
+                protocol: 'https',
+                host: ['ecommerce', 'example', 'com'],
+                path: ['api', 'v2', 'cart']
+              }
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  const { collection, requests, environment } = PostmanImporter.parse(complexPostman);
+  assert.equal(collection.name, 'Complex E-commerce App');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.url, 'https://ecommerce.example.com/api/v2/cart');
+  assert.equal(requests[0]!.auth.type, 'bearer');
+  assert.equal(requests[0]!.auth.bearerToken, '<token>');
+  assert.ok(environment);
+  assert.equal(environment.name, 'Complex E-commerce App Env');
+  assert.equal(environment.variables.length, 2);
+  assert.equal(environment.variables[0]!.key, 'baseUrl');
+  assert.equal(environment.variables[0]!.value, 'https://ecommerce.example.com');
+});
