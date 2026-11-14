@@ -79,6 +79,17 @@ export class DevToolsNetworkAdapter {
       pathname = rawReq.url;
     }
 
+    // Determine resource type (Fetch, XHR, etc.)
+    const initiatorType = (req as unknown as { _resourceType?: string })._resourceType || '';
+    let resourceType = 'Fetch';
+    if (initiatorType) {
+      resourceType = initiatorType.toUpperCase();
+    } else if (rawRes.content.mimeType?.includes('json')) {
+      resourceType = 'Fetch';
+    } else if (rawRes.content.mimeType?.includes('html')) {
+      resourceType = 'Doc';
+    }
+
     // Retrieve response body asynchronously
     const responseBody = await new Promise<string | undefined>(resolve => {
       try {
@@ -107,6 +118,7 @@ export class DevToolsNetworkAdapter {
       method: rawReq.method,
       url: rawReq.url,
       pathname,
+      resourceType,
       status: rawRes.status,
       statusText: rawRes.statusText || '',
       duration: Math.round(req.time || 0),

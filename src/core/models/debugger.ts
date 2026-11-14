@@ -18,6 +18,7 @@ export interface CapturedNetworkRequest {
   method: string;
   url: string;
   pathname: string;
+  resourceType: string;
   status: number;
   statusText: string;
   duration: number;
@@ -32,36 +33,13 @@ export interface CapturedNetworkRequest {
   applicationErrorMessage?: string;
 }
 
-export interface BoxDimensions {
-  width: number;
-  height: number;
-  margin: { top: number; right: number; bottom: number; left: number };
-  border: { top: number; right: number; bottom: number; left: number };
-  padding: { top: number; right: number; bottom: number; left: number };
-}
-
-export interface InspectedElementData {
-  tagName: string;
+export interface CapturedJsError {
   id: string;
-  selector: string;
-  classes: string[];
-  dimensions: BoxDimensions;
-  computedStyles: {
-    display: string;
-    position: string;
-    overflow: string;
-    flexDirection?: string;
-    gridTemplateColumns?: string;
-    zIndex: string;
-    boxSizing: string;
-  };
-  warnings: string[];
-  attributes: Record<string, string>;
-}
-
-export interface DebuggerSession {
   tabId: number;
-  requests: CapturedNetworkRequest[];
-  selectedRequestId?: string;
-  inspectedElement?: InspectedElementData;
+  timestamp: number;
+  message: string;
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+  stack?: string;
 }

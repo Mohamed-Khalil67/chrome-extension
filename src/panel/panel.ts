@@ -1,50 +1,50 @@
 import { DevToolsNetworkAdapter } from '../core/adapters/devtools-network.adapter';
 import { RequestExecutor } from '../core/execution/request-executor';
-import { CapturedNetworkRequest, InspectedElementData } from '../core/models/debugger';
+import { CapturedJsError, CapturedNetworkRequest } from '../core/models/debugger';
 import {
-  AuthType,
   Collection,
   Environment,
   HttpMethod,
-  KeyValuePair,
   RequestHistoryItem,
   RequestItem
 } from '../core/models/workspace';
 import { Redactor } from '../core/security/redactor';
 import { storage } from '../core/storage/indexed-db';
-import { BoxModelDiagram } from './components/box-model';
 import { JsonViewer } from './components/json-viewer';
 
 export class PanelController {
   private tabId: number = 0;
-  private activeMode: 'debugger' | 'workspace' = 'debugger';
+  private activeScreen: 'monitor' | 'workspace' = 'monitor';
   private environments: Environment[] = [];
   private activeEnv: Environment | null = null;
   private collections: Collection[] = [];
   private savedRequests: RequestItem[] = [];
   private history: RequestHistoryItem[] = [];
 
-  // Debugger state
-  private debuggerRequests: CapturedNetworkRequest[] = [];
-  private selectedDebuggerRequestId: string | null = null;
+  // Monitor state
+  private requests: CapturedNetworkRequest[] = [];
+  private selectedRequestId: string | null = null;
+  private runtimeErrors: CapturedJsError[] = [];
 
-  // Workspace state
+  // API Client state
   private openTabs: RequestItem[] = [];
   private activeTabId: string = '';
 
   async init(): Promise<void> {
-    this.detectTabId();
+    this.detectTabContext();
     this.setupEventListeners();
     await this.loadWorkspaceData();
     this.initDefaultWorkspaceTab();
     this.listenToDevToolsMessages();
   }
 
-  private detectTabId(): void {
+  private detectTabContext(): void {
     if (typeof chrome !== 'undefined' && chrome.devtools && chrome.devtools.inspectedWindow) {
       this.tabId = chrome.devtools.inspectedWindow.tabId;
-      const badge = document.getElementById('tabSessionBadge');
-      if (badge) badge.textContent = `Tab: ${this.tabId}`;
+      const targetDisplay = document.getElementById('tabTargetDisplay');
+      if (targetDisplay) {
+        targetDisplay.textContent = `Tab: ${this.tabId}`;
+      }
     }
   }
 
@@ -64,169 +64,152 @@ export class PanelController {
     }
   }
 
-  // --- Top Navigation & Mode Switching ---
+  // --- Main Navigation & Event Listeners ---
   private setupEventListeners(): void {
-    const btnDebugger = document.getElementById('btnModeDebugger');
-    const btnWorkspace = document.getElementById('btnModeWorkspace');
-    const viewDebugger = document.getElementById('viewDebugger');
-    const viewWorkspace = document.getElementById('viewWorkspace');
+    const btnNavMonitor = document.getElementById('btnNavMonitor');
+    const btnNavWorkspace = document.getElementById('btnNavWorkspace');
+    const screenMonitor = document.getElementById('screenMonitor');
+    const screenWorkspace = document.getElementById('screenWorkspace');
 
-    btnDebugger?.addEventListener('click', () => {
-      this.activeMode = 'debugger';
-      btnDebugger.classList.add('active');
-      btnWorkspace?.classList.remove('active');
-      viewDebugger?.classList.remove('hidden');
-      viewWorkspace?.classList.add('hidden');
+    btnNavMonitor?.addEventListener('click', () => {
+      this.switchToScreen('monitor');
     });
 
-    btnWorkspace?.addEventListener('click', () => {
-      this.activeMode = 'workspace';
-      btnWorkspace.classList.add('active');
-      btnDebugger?.classList.remove('active');
-      viewWorkspace?.classList.remove('hidden');
-      viewDebugger?.classList.add('hidden');
+    btnNavWorkspace?.addEventListener('click', () => {
+      this.switchToScreen('workspace');
     });
 
-    // Sub-navigation for Debugger (Network vs UI)
-    document.querySelectorAll('.sub-nav-btn').forEach(btn => {
+    // Clear monitor
+    document.getElementById('btnClearMonitor')?.addEventListener('click', () => {
+      this.requests = [];
+      this.selectedRequestId = null;
+      this.runtimeErrors = [];
+      this.updateMonitorMetrics();
+      this.renderRequestsTable();
+      this.renderRequestDetail();
+      this.renderErrorsDrawer();
+    });
+
+    // Dismiss errors
+    document.getElementById('btnDismissErrors')?.addEventListener('click', () => {
+      this.runtimeErrors = [];
+      this.renderErrorsDrawer();
+      this.updateMonitorMetrics();
+    });
+
+    // Search / Filter Monitor
+    const searchInput = document.getElementById('netSearchInput') as HTMLInputElement;
+    searchInput?.addEventListener('input', () => this.renderRequestsTable());
+
+    // Monitor Detail Tabs (Headers | Payload | Response)
+    document.querySelectorAll('.detail-tabs-bar .tab-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const target = (e.currentTarget as HTMLElement).dataset.target;
-        document.querySelectorAll('.sub-nav-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.sub-view-section').forEach(s => s.classList.remove('active'));
+        const tab = (e.currentTarget as HTMLElement).dataset.tab;
+        document.querySelectorAll('.detail-tabs-bar .tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.detail-tab-content').forEach(c => c.classList.remove('active'));
         (e.currentTarget as HTMLElement).classList.add('active');
-        if (target) document.getElementById(target)?.classList.add('active');
+        if (tab) document.getElementById(tab)?.classList.add('active');
       });
     });
 
-    // Detail Pane Subtabs
-    document.querySelectorAll('.detail-tab').forEach(tab => {
-      tab.addEventListener('click', (e) => {
-        const sub = (e.currentTarget as HTMLElement).dataset.subtab;
-        document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.detail-section').forEach(s => s.classList.remove('active'));
-        (e.currentTarget as HTMLElement).classList.add('active');
-        if (sub) document.getElementById(sub)?.classList.add('active');
-      });
+    // Clone captured request to API Client
+    document.getElementById('btnCloneToWorkspace')?.addEventListener('click', () => {
+      this.cloneSelectedRequestToWorkspace();
     });
 
-    // Filter Network table
-    const netFilter = document.getElementById('netFilterInput') as HTMLInputElement;
-    netFilter?.addEventListener('input', () => this.renderNetworkTable());
-
-    // Clear session
-    document.getElementById('btnClearSession')?.addEventListener('click', () => {
-      this.debuggerRequests = [];
-      this.selectedDebuggerRequestId = null;
-      this.renderNetworkTable();
-      this.renderNetworkDetail();
+    // Toggle Pretty / Raw Response in Monitor
+    const btnTogglePretty = document.getElementById('btnTogglePrettyView');
+    const jsonViewer = document.getElementById('detailJsonViewer');
+    const rawBox = document.getElementById('detailRawResponse');
+    btnTogglePretty?.addEventListener('click', () => {
+      const isRaw = jsonViewer?.classList.contains('hidden');
+      if (isRaw) {
+        jsonViewer?.classList.remove('hidden');
+        rawBox?.classList.add('hidden');
+        btnTogglePretty.textContent = 'Raw Text';
+      } else {
+        jsonViewer?.classList.add('hidden');
+        rawBox?.classList.remove('hidden');
+        btnTogglePretty.textContent = 'Pretty View';
+      }
     });
 
-    // DOM Inspector button
-    document.getElementById('btnInspectSelectedElement')?.addEventListener('click', () => {
-      this.inspectSelectedElement();
-    });
-
-    // Copy response body
-    document.getElementById('btnCopyResponseBody')?.addEventListener('click', () => {
-      const selected = this.debuggerRequests.find(r => r.id === this.selectedDebuggerRequestId);
+    // Copy Response Body
+    document.getElementById('btnCopyResponse')?.addEventListener('click', () => {
+      const selected = this.requests.find(r => r.id === this.selectedRequestId);
       if (selected && selected.responseBody) {
         navigator.clipboard.writeText(selected.responseBody);
       }
     });
 
-    // Toggle Pretty / Raw JSON
-    const btnToggle = document.getElementById('btnTogglePrettyJson');
-    const formatted = document.getElementById('detailResponseFormatted');
-    const raw = document.getElementById('detailResponseRaw');
-    btnToggle?.addEventListener('click', () => {
-      const isRaw = formatted?.classList.contains('hidden');
-      if (isRaw) {
-        formatted?.classList.remove('hidden');
-        raw?.classList.add('hidden');
-        btnToggle.textContent = 'Raw Text';
-      } else {
-        formatted?.classList.add('hidden');
-        raw?.classList.remove('hidden');
-        btnToggle.textContent = 'Pretty Tree';
-      }
-    });
-
-    // --- Workspace Events ---
-    // Sidebar Tabs
-    document.querySelectorAll('.sidebar-tab').forEach(tab => {
-      tab.addEventListener('click', (e) => {
-        const sidetab = (e.currentTarget as HTMLElement).dataset.sidetab;
-        document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.sidebar-content').forEach(c => c.classList.remove('active'));
+    // --- API Client Navigation & Events ---
+    // Sidebar navigation
+    document.querySelectorAll('.sidebar-nav .s-nav-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const sec = (e.currentTarget as HTMLElement).dataset.section;
+        document.querySelectorAll('.sidebar-nav .s-nav-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
         (e.currentTarget as HTMLElement).classList.add('active');
-        if (sidetab) document.getElementById(sidetab)?.classList.add('active');
+        if (sec) document.getElementById(sec)?.classList.add('active');
       });
     });
 
-    // Config Tabs (Params, Headers, Auth, Body)
-    document.querySelectorAll('.config-tab').forEach(tab => {
-      tab.addEventListener('click', (e) => {
+    // Config tabs (Params, Headers, Body, Auth)
+    document.querySelectorAll('.config-tabs-bar .cfg-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
         const cfg = (e.currentTarget as HTMLElement).dataset.cfg;
-        document.querySelectorAll('.config-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.config-section').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('.config-tabs-bar .cfg-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.cfg-content').forEach(c => c.classList.remove('active'));
         (e.currentTarget as HTMLElement).classList.add('active');
         if (cfg) document.getElementById(cfg)?.classList.add('active');
       });
     });
 
-    // Response Subtabs (Pretty, Raw, Headers)
-    document.querySelectorAll('.resp-tab').forEach(tab => {
-      tab.addEventListener('click', (e) => {
-        const resptab = (e.currentTarget as HTMLElement).dataset.resptab;
-        document.querySelectorAll('.resp-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.resp-content').forEach(c => c.classList.remove('active'));
+    // Response view modes (Pretty, Raw, Headers)
+    document.querySelectorAll('.resp-view-modes .resp-mode-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = (e.currentTarget as HTMLElement).dataset.resp;
+        document.querySelectorAll('.resp-view-modes .resp-mode-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.resp-pane').forEach(p => p.classList.remove('active'));
         (e.currentTarget as HTMLElement).classList.add('active');
-        if (resptab) document.getElementById(resptab)?.classList.add('active');
+        if (mode) document.getElementById(mode)?.classList.add('active');
       });
     });
 
     // Add Tab Button
-    document.getElementById('btnNewRequestTab')?.addEventListener('click', () => {
+    document.getElementById('btnAddRequestTab')?.addEventListener('click', () => {
       this.addNewWorkspaceTab();
     });
 
-    // Send Request
+    // Send Request Button
     document.getElementById('btnSendRequest')?.addEventListener('click', () => {
       this.sendActiveRequest();
     });
 
-    // Save Request Modal
-    document.getElementById('btnSaveRequest')?.addEventListener('click', () => {
-      this.openSaveRequestModal();
+    // Save to Collection Button & Modal
+    document.getElementById('btnSaveToCollection')?.addEventListener('click', () => {
+      this.openSaveModal();
     });
 
-    document.getElementById('btnCloseSaveModal')?.addEventListener('click', () => {
-      (document.getElementById('saveReqModal') as HTMLDialogElement)?.close();
+    document.getElementById('btnCancelSave')?.addEventListener('click', () => {
+      (document.getElementById('modalSaveRequest') as HTMLDialogElement)?.close();
     });
 
-    document.getElementById('btnCancelSaveModal')?.addEventListener('click', () => {
-      (document.getElementById('saveReqModal') as HTMLDialogElement)?.close();
-    });
-
-    document.getElementById('btnConfirmSaveReq')?.addEventListener('click', () => {
-      this.confirmSaveRequest();
+    document.getElementById('btnConfirmSave')?.addEventListener('click', () => {
+      this.confirmSave();
     });
 
     // Environment Modal
     document.getElementById('btnCreateEnv')?.addEventListener('click', () => {
-      this.openEnvironmentModal();
+      this.openEnvModal();
     });
 
-    document.getElementById('btnCloseEnvModal')?.addEventListener('click', () => {
-      (document.getElementById('envModal') as HTMLDialogElement)?.close();
+    document.getElementById('btnCancelEnv')?.addEventListener('click', () => {
+      (document.getElementById('modalEnvironment') as HTMLDialogElement)?.close();
     });
 
-    document.getElementById('btnCancelEnvModal')?.addEventListener('click', () => {
-      (document.getElementById('envModal') as HTMLDialogElement)?.close();
-    });
-
-    document.getElementById('btnSaveEnvModal')?.addEventListener('click', () => {
-      this.saveEnvironmentModal();
+    document.getElementById('btnSaveEnv')?.addEventListener('click', () => {
+      this.saveEnvModal();
     });
 
     // Add row buttons
@@ -238,33 +221,30 @@ export class PanelController {
       this.addHeaderRow('', '');
     });
 
-    document.getElementById('btnAddEnvVarRow')?.addEventListener('click', () => {
+    document.getElementById('btnAddEnvVar')?.addEventListener('click', () => {
       this.addEnvVarRow('', '');
     });
 
-    // Format JSON body button
-    document.getElementById('btnFormatJsonBody')?.addEventListener('click', () => {
-      const textarea = document.getElementById('reqBodyTextarea') as HTMLTextAreaElement;
-      if (textarea && textarea.value) {
+    // Format JSON button
+    document.getElementById('btnFormatJson')?.addEventListener('click', () => {
+      const editor = document.getElementById('reqBodyEditor') as HTMLTextAreaElement;
+      if (editor && editor.value) {
         try {
-          const parsed = JSON.parse(textarea.value);
-          textarea.value = JSON.stringify(parsed, null, 2);
-        } catch {
-          // not valid JSON, leave as is
-        }
+          const parsed = JSON.parse(editor.value);
+          editor.value = JSON.stringify(parsed, null, 2);
+        } catch {}
       }
     });
 
-    // Environment dropdown change
+    // Active Environment select
     const envSelect = document.getElementById('activeEnvSelect') as HTMLSelectElement;
     envSelect?.addEventListener('change', () => {
-      const selectedId = envSelect.value;
-      this.activeEnv = this.environments.find(e => e.id === selectedId) || null;
+      this.activeEnv = this.environments.find(e => e.id === envSelect.value) || null;
     });
 
-    // Create Collection button
+    // New Collection button
     document.getElementById('btnCreateCollection')?.addEventListener('click', () => {
-      const name = prompt('Enter new collection name:');
+      const name = prompt('Collection Name:');
       if (name && name.trim()) {
         const col: Collection = {
           id: `col_${Date.now()}`,
@@ -290,17 +270,38 @@ export class PanelController {
     });
   }
 
-  // --- DevTools Integration & Request Capture ---
+  private switchToScreen(screen: 'monitor' | 'workspace'): void {
+    this.activeScreen = screen;
+    const btnNavMonitor = document.getElementById('btnNavMonitor');
+    const btnNavWorkspace = document.getElementById('btnNavWorkspace');
+    const screenMonitor = document.getElementById('screenMonitor');
+    const screenWorkspace = document.getElementById('screenWorkspace');
+
+    if (screen === 'monitor') {
+      btnNavMonitor?.classList.add('active');
+      btnNavWorkspace?.classList.remove('active');
+      screenMonitor?.classList.remove('hidden');
+      screenWorkspace?.classList.add('hidden');
+    } else {
+      btnNavWorkspace?.classList.add('active');
+      btnNavMonitor?.classList.remove('active');
+      screenWorkspace?.classList.remove('hidden');
+      screenMonitor?.classList.add('hidden');
+    }
+  }
+
+  // --- Monitor Logic & Traffic Capture ---
   private listenToDevToolsMessages(): void {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener((msg) => {
         if (msg && msg.type === 'FRONTEND_LENS_NETWORK_REQUEST') {
           this.handleCapturedRequest(msg.data as CapturedNetworkRequest);
+        } else if (msg && msg.type === 'FRONTEND_LENS_RUNTIME_ERROR') {
+          this.handleCapturedError(msg.data as CapturedJsError);
         }
       });
     }
 
-    // Direct registration when panel is loaded
     if (typeof chrome !== 'undefined' && chrome.devtools && chrome.devtools.network) {
       chrome.devtools.network.onRequestFinished.addListener(async (req) => {
         const adapted = await DevToolsNetworkAdapter.adaptHarRequest(req, this.tabId);
@@ -310,39 +311,86 @@ export class PanelController {
   }
 
   private handleCapturedRequest(req: CapturedNetworkRequest): void {
-    this.debuggerRequests.unshift(req);
-    // Limit to 500 requests per tab session to avoid unbounded memory
-    if (this.debuggerRequests.length > 500) {
-      this.debuggerRequests.pop();
+    this.requests.unshift(req);
+    if (this.requests.length > 500) {
+      this.requests.pop();
     }
-    this.renderNetworkTable();
+    this.updateMonitorMetrics();
+    this.renderRequestsTable();
   }
 
-  private renderNetworkTable(): void {
+  private handleCapturedError(err: CapturedJsError): void {
+    err.id = `err_${Date.now()}`;
+    err.timestamp = Date.now();
+    this.runtimeErrors.unshift(err);
+    if (this.runtimeErrors.length > 100) this.runtimeErrors.pop();
+    this.updateMonitorMetrics();
+    this.renderErrorsDrawer();
+  }
+
+  private updateMonitorMetrics(): void {
+    const totalRequestsEl = document.getElementById('metricTotalRequests');
+    const totalErrorsEl = document.getElementById('metricTotalErrors');
+    const avgDurationEl = document.getElementById('metricAvgDuration');
+
+    const totalRequests = this.requests.length;
+    const httpErrors = this.requests.filter(r => r.status >= 400 || r.statusClassification === 'app-failure' || r.status === 0).length;
+    const totalErrors = httpErrors + this.runtimeErrors.length;
+
+    let avgDuration = 0;
+    if (totalRequests > 0) {
+      const sum = this.requests.reduce((acc, r) => acc + r.duration, 0);
+      avgDuration = Math.round(sum / totalRequests);
+    }
+
+    if (totalRequestsEl) totalRequestsEl.textContent = String(totalRequests);
+    if (totalErrorsEl) totalErrorsEl.textContent = String(totalErrors);
+    if (avgDurationEl) avgDurationEl.textContent = `${avgDuration}ms`;
+  }
+
+  private renderErrorsDrawer(): void {
+    const drawer = document.getElementById('errorsDrawer');
+    const countEl = document.getElementById('errorsCount');
+    const listEl = document.getElementById('errorsList');
+
+    if (!drawer || !countEl || !listEl) return;
+
+    if (this.runtimeErrors.length === 0) {
+      drawer.classList.add('hidden');
+      return;
+    }
+
+    drawer.classList.remove('hidden');
+    countEl.textContent = String(this.runtimeErrors.length);
+    listEl.innerHTML = this.runtimeErrors.map(e => `
+      <div class="error-item">
+        • ${e.message} ${e.filename ? `(${e.filename}:${e.lineno})` : ''}
+      </div>
+    `).join('');
+  }
+
+  private renderRequestsTable(): void {
     const tbody = document.getElementById('netTableBody');
-    const countBadge = document.getElementById('netRequestCount');
-    const filterText = (document.getElementById('netFilterInput') as HTMLInputElement)?.value.toLowerCase() || '';
+    const filter = (document.getElementById('netSearchInput') as HTMLInputElement)?.value.toLowerCase() || '';
 
     if (!tbody) return;
 
-    const filtered = this.debuggerRequests.filter(r => {
-      if (!filterText) return true;
-      return r.url.toLowerCase().includes(filterText) ||
-        r.status.toString().includes(filterText) ||
-        r.method.toLowerCase().includes(filterText);
+    const filtered = this.requests.filter(r => {
+      if (!filter) return true;
+      return r.url.toLowerCase().includes(filter) ||
+        r.status.toString().includes(filter) ||
+        r.method.toLowerCase().includes(filter);
     });
 
-    if (countBadge) countBadge.textContent = `${filtered.length} requests`;
-
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="5">${this.debuggerRequests.length === 0 ? 'Waiting for network requests in inspected tab...' : 'No matching requests found.'}</td></tr>`;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="5">${this.requests.length === 0 ? 'Waiting for application traffic in inspected tab...' : 'No matching requests.'}</td></tr>`;
       return;
     }
 
     tbody.innerHTML = '';
     filtered.forEach(r => {
       const tr = document.createElement('tr');
-      if (r.id === this.selectedDebuggerRequestId) tr.classList.add('selected');
+      if (r.id === this.selectedRequestId) tr.classList.add('selected');
 
       let badgeClass = 'badge-2xx';
       if (r.statusClassification === 'app-failure') badgeClass = 'badge-app-err';
@@ -351,222 +399,141 @@ export class PanelController {
       else if (r.status >= 300) badgeClass = 'badge-3xx';
       else if (r.status === 0) badgeClass = 'badge-5xx';
 
-      const statusDisplay = r.statusClassification === 'app-failure' ? `${r.status} APP` : (r.status === 0 ? 'FAIL' : r.status);
-      const sizeDisplay = r.size > 1024 ? `${(r.size / 1024).toFixed(1)} KB` : `${r.size} B`;
+      const statusText = r.statusClassification === 'app-failure' ? `${r.status} APP` : (r.status === 0 ? 'FAIL' : String(r.status));
 
       tr.innerHTML = `
-        <td><span class="badge-status ${badgeClass}">${statusDisplay}</span></td>
-        <td><span class="badge-method">${r.method}</span></td>
+        <td><span class="status-badge ${badgeClass}">${statusText}</span></td>
+        <td><span class="method-tag">${r.method}</span></td>
         <td title="${r.url}">${r.pathname || r.url}</td>
-        <td>${r.duration} ms</td>
-        <td>${sizeDisplay}</td>
+        <td><span class="type-tag">${r.resourceType || 'Fetch'}</span></td>
+        <td class="time-tag">${r.duration} ms</td>
       `;
 
       tr.onclick = () => {
-        this.selectedDebuggerRequestId = r.id;
-        this.renderNetworkTable();
-        this.renderNetworkDetail();
+        this.selectedRequestId = r.id;
+        this.renderRequestsTable();
+        this.renderRequestDetail();
       };
 
       tbody.appendChild(tr);
     });
   }
 
-  private renderNetworkDetail(): void {
-    const emptyMsg = document.getElementById('netDetailEmpty');
-    const content = document.getElementById('netDetailContent');
-    if (!emptyMsg || !content) return;
+  private renderRequestDetail(): void {
+    const placeholder = document.getElementById('detailPlaceholder');
+    const container = document.getElementById('detailContainer');
+    if (!placeholder || !container) return;
 
-    const selected = this.debuggerRequests.find(r => r.id === this.selectedDebuggerRequestId);
+    const selected = this.requests.find(r => r.id === this.selectedRequestId);
     if (!selected) {
-      emptyMsg.classList.remove('hidden');
-      content.classList.add('hidden');
+      placeholder.classList.remove('hidden');
+      container.classList.add('hidden');
       return;
     }
 
-    emptyMsg.classList.add('hidden');
-    content.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+    container.classList.remove('hidden');
 
-    // Overview
-    document.getElementById('detailUrl')!.textContent = selected.url;
-    document.getElementById('detailStatus')!.textContent = `${selected.status} ${selected.statusText}`;
+    // Header info
+    const pill = document.getElementById('detailStatusPill')!;
+    pill.textContent = `${selected.status} ${selected.statusText}`;
+    pill.className = 'status-badge ' + (selected.status >= 200 && selected.status < 300 ? 'badge-2xx' : 'badge-4xx');
+    if (selected.status >= 500 || selected.status === 0) pill.className = 'status-badge badge-5xx';
+    if (selected.statusClassification === 'app-failure') pill.className = 'status-badge badge-app-err';
+
     document.getElementById('detailMethod')!.textContent = selected.method;
-    document.getElementById('detailLatency')!.textContent = `${selected.duration} ms`;
-    document.getElementById('detailSize')!.textContent = `${selected.size} bytes`;
-    document.getElementById('detailMime')!.textContent = selected.mimeType;
+    const urlEl = document.getElementById('detailUrlPath')!;
+    urlEl.textContent = selected.pathname || selected.url;
+    urlEl.title = selected.url;
 
-    const appErrRow = document.getElementById('appErrorRow');
-    const appErrMsg = document.getElementById('detailAppError');
+    // Application error banner
+    const appAlert = document.getElementById('detailAppErrorAlert')!;
+    const appMsg = document.getElementById('detailAppErrorMessage')!;
     if (selected.statusClassification === 'app-failure') {
-      appErrRow!.style.display = 'flex';
-      appErrMsg!.textContent = selected.applicationErrorMessage || 'Application error returned in payload';
+      appAlert.classList.remove('hidden');
+      appMsg.textContent = selected.applicationErrorMessage || 'Business failure payload detected';
     } else {
-      appErrRow!.style.display = 'none';
+      appAlert.classList.add('hidden');
     }
 
-    // Headers with Redactor
-    const resHeadersEl = document.getElementById('detailResHeaders')!;
+    // Headers
+    const resHeadersEl = document.getElementById('detailResponseHeaders')!;
     resHeadersEl.innerHTML = '';
-    const redactedResHeaders = Redactor.redactHeaderPairs(selected.responseHeaders);
-    redactedResHeaders.forEach(h => {
-      const row = document.createElement('div');
-      row.className = 'header-row';
-      row.innerHTML = `<span class="header-name">${h.name}:</span><span class="header-val">${h.value}</span>`;
-      resHeadersEl.appendChild(row);
+    Redactor.redactHeaderPairs(selected.responseHeaders).forEach(h => {
+      const entry = document.createElement('div');
+      entry.className = 'header-entry';
+      entry.innerHTML = `<span class="header-key">${h.name}:</span><span class="header-val">${h.value}</span>`;
+      resHeadersEl.appendChild(entry);
     });
 
-    const reqHeadersEl = document.getElementById('detailReqHeaders')!;
+    const reqHeadersEl = document.getElementById('detailRequestHeaders')!;
     reqHeadersEl.innerHTML = '';
-    const redactedReqHeaders = Redactor.redactHeaderPairs(selected.requestHeaders);
-    redactedReqHeaders.forEach(h => {
-      const row = document.createElement('div');
-      row.className = 'header-row';
-      row.innerHTML = `<span class="header-name">${h.name}:</span><span class="header-val">${h.value}</span>`;
-      reqHeadersEl.appendChild(row);
+    Redactor.redactHeaderPairs(selected.requestHeaders).forEach(h => {
+      const entry = document.createElement('div');
+      entry.className = 'header-entry';
+      entry.innerHTML = `<span class="header-key">${h.name}:</span><span class="header-val">${h.value}</span>`;
+      reqHeadersEl.appendChild(entry);
     });
 
     // Payload
-    const payloadEl = document.getElementById('detailPayloadText')!;
-    payloadEl.textContent = selected.requestPayload || 'No payload sent with this request.';
+    const payloadBox = document.getElementById('detailPayloadBox')!;
+    payloadBox.textContent = selected.requestPayload || 'No request payload sent with this request.';
 
     // Response
-    const formattedContainer = document.getElementById('detailResponseFormatted')!;
-    const rawPreview = document.getElementById('detailResponseRaw')!;
-    rawPreview.textContent = selected.responseBody || 'No response body content available.';
+    const jsonTree = document.getElementById('detailJsonViewer')!;
+    const rawBox = document.getElementById('detailRawResponse')!;
+    rawBox.textContent = selected.responseBody || 'No response content.';
 
     if (selected.responseBody && selected.isJson) {
       try {
         const parsed = JSON.parse(selected.responseBody);
-        JsonViewer.render(parsed, formattedContainer);
-        formattedContainer.classList.remove('hidden');
-        rawPreview.classList.add('hidden');
-        document.getElementById('btnTogglePrettyJson')!.textContent = 'Raw Text';
+        jsonTree.classList.remove('hidden');
+        rawBox.classList.add('hidden');
+        document.getElementById('btnTogglePrettyView')!.textContent = 'Raw Text';
+        JsonViewer.render(parsed, jsonTree);
       } catch {
-        formattedContainer.innerHTML = '';
-        formattedContainer.classList.add('hidden');
-        rawPreview.classList.remove('hidden');
+        jsonTree.classList.add('hidden');
+        rawBox.classList.remove('hidden');
       }
     } else {
-      formattedContainer.innerHTML = '';
-      formattedContainer.classList.add('hidden');
-      rawPreview.classList.remove('hidden');
+      jsonTree.classList.add('hidden');
+      rawBox.classList.remove('hidden');
     }
   }
 
-  // --- UI & DOM Inspector ---
-  private inspectSelectedElement(): void {
-    if (typeof chrome === 'undefined' || !chrome.devtools || !chrome.devtools.inspectedWindow) {
-      alert('DOM inspection is only available inside active Chrome DevTools.');
-      return;
-    }
+  private cloneSelectedRequestToWorkspace(): void {
+    const selected = this.requests.find(r => r.id === this.selectedRequestId);
+    if (!selected) return;
 
-    const script = `
-      (() => {
-        const el = $0 || document.activeElement || document.body;
-        if (!el) return JSON.stringify({ error: 'No element selected' });
-        const cs = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        const parsePx = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : Math.round(n); };
-
-        const dimensions = {
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-          margin: { top: parsePx(cs.marginTop), right: parsePx(cs.marginRight), bottom: parsePx(cs.marginBottom), left: parsePx(cs.marginLeft) },
-          border: { top: parsePx(cs.borderTopWidth), right: parsePx(cs.borderRightWidth), bottom: parsePx(cs.borderBottomWidth), left: parsePx(cs.borderLeftWidth) },
-          padding: { top: parsePx(cs.paddingTop), right: parsePx(cs.paddingRight), bottom: parsePx(cs.paddingBottom), left: parsePx(cs.paddingLeft) }
-        };
-
-        const warnings = [];
-        if (rect.right > window.innerWidth + 1) {
-          warnings.push('Element extends ' + Math.round(rect.right - window.innerWidth) + 'px beyond viewport width (causes horizontal scrollbar).');
-        }
-        if (el.scrollWidth > el.clientWidth && cs.overflowX !== 'hidden' && cs.overflowX !== 'scroll' && cs.overflowX !== 'auto') {
-          warnings.push('Content overflows element width without an explicit overflow handler.');
-        }
-        if (['BUTTON', 'A', 'INPUT'].includes(el.tagName)) {
-          if (dimensions.width === 0 || dimensions.height === 0 || cs.display === 'none' || parseFloat(cs.opacity) === 0) {
-            warnings.push('Interactive element is invisible or zero-sized and cannot be clicked.');
-          }
-        }
-        if (el.tagName === 'IMG' && !el.hasAttribute('alt')) {
-          warnings.push('Image lacks an alt attribute (Accessibility issue).');
-        }
-
-        let selector = el.tagName.toLowerCase();
-        if (el.id) selector += '#' + el.id;
-        else if (el.classList.length > 0) selector += '.' + Array.from(el.classList).slice(0, 3).join('.');
-
-        return JSON.stringify({
-          tagName: el.tagName.toLowerCase(),
-          id: el.id,
-          selector,
-          classes: Array.from(el.classList),
-          dimensions,
-          computedStyles: {
-            display: cs.display,
-            position: cs.position,
-            overflow: cs.overflow,
-            zIndex: cs.zIndex,
-            boxSizing: cs.boxSizing
-          },
-          warnings
-        });
-      })()
-    `;
-
-    chrome.devtools.inspectedWindow.eval(script, (result, exceptionInfo) => {
-      if (exceptionInfo && exceptionInfo.isException) {
-        alert('Could not inspect element: ' + (exceptionInfo.value || 'Script exception'));
-        return;
-      }
-      try {
-        const data = typeof result === 'string' ? JSON.parse(result) : result;
-        if (data.error) {
-          alert(data.error);
-          return;
-        }
-        this.renderDomInspection(data as InspectedElementData);
-      } catch (err) {
-        console.error('Failed to parse DOM inspection result:', err);
+    this.addNewWorkspaceTab({
+      name: `${selected.method} ${selected.pathname || '/request'}`,
+      method: selected.method as HttpMethod,
+      url: selected.url,
+      headers: selected.requestHeaders.map(h => ({
+        id: Math.random().toString(),
+        key: h.name,
+        value: h.value,
+        enabled: true
+      })),
+      body: {
+        type: selected.requestPayload ? 'json' : 'none',
+        raw: selected.requestPayload
       }
     });
+
+    this.switchToScreen('workspace');
   }
 
-  private renderDomInspection(data: InspectedElementData): void {
-    document.getElementById('uiSelectorPill')!.textContent = `<${data.selector}>`;
-
-    // Box Model
-    const boxContainer = document.getElementById('uiBoxModelContainer')!;
-    BoxModelDiagram.render(data.dimensions, boxContainer);
-
-    // Computed Styles
-    document.getElementById('styleDisplay')!.textContent = data.computedStyles.display;
-    document.getElementById('stylePosition')!.textContent = data.computedStyles.position;
-    document.getElementById('styleOverflow')!.textContent = data.computedStyles.overflow;
-    document.getElementById('styleBoxSizing')!.textContent = data.computedStyles.boxSizing;
-    document.getElementById('styleZIndex')!.textContent = data.computedStyles.zIndex;
-
-    // Warnings
-    const warnContainer = document.getElementById('uiWarningsContainer')!;
-    if (data.warnings.length === 0) {
-      warnContainer.innerHTML = '<div class="alert-info">No layout or accessibility warnings detected.</div>';
-    } else {
-      warnContainer.innerHTML = data.warnings
-        .map(w => `<div class="alert-warning">${w}</div>`)
-        .join('');
-    }
-  }
-
-  // --- API Client Workspace Management ---
+  // --- API Client (Postman) Logic ---
   private initDefaultWorkspaceTab(): void {
     if (this.openTabs.length === 0) {
       const defaultReq: RequestItem = {
         id: `tab_${Date.now()}`,
-        name: 'Untitled Request',
+        name: 'GET Users',
         method: 'GET',
-        url: 'https://jsonplaceholder.typicode.com/todos/1',
+        url: 'https://jsonplaceholder.typicode.com/users',
         headers: [{ id: '1', key: 'Accept', value: 'application/json', enabled: true }],
-        params: [],
+        params: [{ id: 'p1', key: 'limit', value: '10', enabled: true }],
         auth: { type: 'none' },
         body: { type: 'none' },
         executionMode: 'inspected-page',
@@ -583,7 +550,7 @@ export class PanelController {
   private addNewWorkspaceTab(initial?: Partial<RequestItem>): void {
     const newReq: RequestItem = {
       id: `tab_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      name: initial?.name || 'Untitled Request',
+      name: initial?.name || 'New Request',
       method: initial?.method || 'GET',
       url: initial?.url || '',
       headers: initial?.headers || [],
@@ -602,24 +569,22 @@ export class PanelController {
   }
 
   private renderWorkspaceTabs(): void {
-    const bar = document.getElementById('requestTabsBar');
-    if (!bar) return;
+    const strip = document.getElementById('requestTabsStrip');
+    const addBtn = document.getElementById('btnAddRequestTab');
+    if (!strip) return;
 
-    // Keep the new tab button at the end
-    const newBtn = document.getElementById('btnNewRequestTab');
-    bar.innerHTML = '';
-
+    strip.innerHTML = '';
     this.openTabs.forEach(tab => {
-      const pill = document.createElement('div');
-      pill.className = `req-tab-pill ${tab.id === this.activeTabId ? 'active' : ''}`;
-      pill.innerHTML = `
-        <span class="sidebar-method-badge badge-${tab.method.toLowerCase()}">${tab.method}</span>
-        <span class="tab-title">${tab.name}</span>
-        <span class="tab-close-btn">&times;</span>
+      const item = document.createElement('div');
+      item.className = `req-tab-item ${tab.id === this.activeTabId ? 'active' : ''}`;
+      item.innerHTML = `
+        <span class="method-tag">${tab.method}</span>
+        <span>${tab.name}</span>
+        <span class="tab-x-btn">&times;</span>
       `;
 
-      pill.onclick = (e) => {
-        if ((e.target as HTMLElement).classList.contains('tab-close-btn')) {
+      item.onclick = (e) => {
+        if ((e.target as HTMLElement).classList.contains('tab-x-btn')) {
           e.stopPropagation();
           this.closeWorkspaceTab(tab.id);
         } else {
@@ -630,10 +595,10 @@ export class PanelController {
         }
       };
 
-      bar.appendChild(pill);
+      strip.appendChild(item);
     });
 
-    if (newBtn) bar.appendChild(newBtn);
+    if (addBtn) strip.appendChild(addBtn);
   }
 
   private closeWorkspaceTab(id: string): void {
@@ -661,7 +626,7 @@ export class PanelController {
 
     // Collect params
     tab.params = [];
-    document.querySelectorAll('#paramsKvRows .kv-row').forEach(row => {
+    document.querySelectorAll('#paramsRows .kv-row').forEach(row => {
       const k = (row.querySelector('.kv-key') as HTMLInputElement)?.value;
       const v = (row.querySelector('.kv-val') as HTMLInputElement)?.value;
       if (k) tab.params.push({ id: Math.random().toString(), key: k, value: v, enabled: true });
@@ -669,17 +634,17 @@ export class PanelController {
 
     // Collect headers
     tab.headers = [];
-    document.querySelectorAll('#headersKvRows .kv-row').forEach(row => {
+    document.querySelectorAll('#headersRows .kv-row').forEach(row => {
       const k = (row.querySelector('.kv-key') as HTMLInputElement)?.value;
       const v = (row.querySelector('.kv-val') as HTMLInputElement)?.value;
       if (k) tab.headers.push({ id: Math.random().toString(), key: k, value: v, enabled: true });
     });
 
     // Collect body
-    const bodyType = (document.querySelector('input[name="bodyType"]:checked') as HTMLInputElement)?.value as RequestItem['body']['type'];
+    const bodyFormat = (document.querySelector('input[name="reqBodyFormat"]:checked') as HTMLInputElement)?.value as RequestItem['body']['type'];
     tab.body = {
-      type: bodyType || 'none',
-      raw: (document.getElementById('reqBodyTextarea') as HTMLTextAreaElement)?.value
+      type: bodyFormat || 'none',
+      raw: (document.getElementById('reqBodyEditor') as HTMLTextAreaElement)?.value
     };
   }
 
@@ -692,46 +657,46 @@ export class PanelController {
     (document.getElementById('reqExecModeSelect') as HTMLSelectElement).value = tab.executionMode;
 
     // Params
-    const paramsContainer = document.getElementById('paramsKvRows')!;
+    const paramsContainer = document.getElementById('paramsRows')!;
     paramsContainer.innerHTML = '';
     tab.params.forEach(p => this.addParamRow(p.key, p.value));
     if (tab.params.length === 0) this.addParamRow('', '');
 
     // Headers
-    const headersContainer = document.getElementById('headersKvRows')!;
+    const headersContainer = document.getElementById('headersRows')!;
     headersContainer.innerHTML = '';
     tab.headers.forEach(h => this.addHeaderRow(h.key, h.value));
     if (tab.headers.length === 0) this.addHeaderRow('', '');
 
     // Body
-    const bodyRadio = document.querySelector(`input[name="bodyType"][value="${tab.body.type}"]`) as HTMLInputElement;
+    const bodyRadio = document.querySelector(`input[name="reqBodyFormat"][value="${tab.body.type}"]`) as HTMLInputElement;
     if (bodyRadio) bodyRadio.checked = true;
-    (document.getElementById('reqBodyTextarea') as HTMLTextAreaElement).value = tab.body.raw || '';
+    (document.getElementById('reqBodyEditor') as HTMLTextAreaElement).value = tab.body.raw || '';
   }
 
   private addParamRow(k: string, v: string): void {
-    const container = document.getElementById('paramsKvRows')!;
+    const container = document.getElementById('paramsRows')!;
     const row = document.createElement('div');
     row.className = 'kv-row';
     row.innerHTML = `
-      <input type="text" class="kv-input kv-key" placeholder="Parameter key" value="${k}">
+      <input type="text" class="kv-input kv-key" placeholder="Key" value="${k}">
       <input type="text" class="kv-input kv-val" placeholder="Value" value="${v}">
-      <button class="btn-remove-row">&times;</button>
+      <button class="btn-micro" style="color:#ef4444;">&times;</button>
     `;
-    row.querySelector('.btn-remove-row')?.addEventListener('click', () => row.remove());
+    row.querySelector('button')?.addEventListener('click', () => row.remove());
     container.appendChild(row);
   }
 
   private addHeaderRow(k: string, v: string): void {
-    const container = document.getElementById('headersKvRows')!;
+    const container = document.getElementById('headersRows')!;
     const row = document.createElement('div');
     row.className = 'kv-row';
     row.innerHTML = `
-      <input type="text" class="kv-input kv-key" placeholder="Header name" value="${k}">
+      <input type="text" class="kv-input kv-key" placeholder="Header" value="${k}">
       <input type="text" class="kv-input kv-val" placeholder="Value" value="${v}">
-      <button class="btn-remove-row">&times;</button>
+      <button class="btn-micro" style="color:#ef4444;">&times;</button>
     `;
-    row.querySelector('.btn-remove-row')?.addEventListener('click', () => row.remove());
+    row.querySelector('button')?.addEventListener('click', () => row.remove());
     container.appendChild(row);
   }
 
@@ -747,52 +712,44 @@ export class PanelController {
     sendBtn.disabled = true;
     sendBtn.textContent = 'Sending...';
 
-    const pill = document.getElementById('respStatusPill')!;
-    pill.textContent = 'Sending...';
-    pill.className = 'metric-pill status-neutral';
+    const badge = document.getElementById('respStatusBadge')!;
+    badge.textContent = 'Sending...';
+    badge.className = 'status-badge';
 
     try {
       const response = await RequestExecutor.execute(tab, this.activeEnv);
 
-      // Status pill styling
-      pill.textContent = `${response.status} ${response.statusText}`;
-      if (response.status >= 200 && response.status < 300) {
-        pill.className = 'metric-pill badge-2xx';
-      } else if (response.status >= 400 && response.status < 500) {
-        pill.className = 'metric-pill badge-4xx';
-      } else if (response.status >= 500 || response.status === 0) {
-        pill.className = 'metric-pill badge-5xx';
-      }
+      badge.textContent = `${response.status} ${response.statusText}`;
+      badge.className = 'status-badge ' + (response.status >= 200 && response.status < 300 ? 'badge-2xx' : 'badge-4xx');
+      if (response.status >= 500 || response.status === 0) badge.className = 'status-badge badge-5xx';
 
       document.getElementById('respDurationText')!.textContent = `${response.duration} ms`;
       document.getElementById('respSizeText')!.textContent = `${response.size} B`;
 
-      // Render response content
-      const prettyTree = document.getElementById('respPrettyTree')!;
-      const prettyEmpty = document.getElementById('respPrettyEmpty')!;
-      const rawText = document.getElementById('respRawText')!;
-      const headersList = document.getElementById('respHeadersList')!;
+      const jsonTree = document.getElementById('respJsonTree')!;
+      const emptyState = document.getElementById('respEmptyState')!;
+      const rawBox = document.getElementById('respRawContent')!;
+      const headersContent = document.getElementById('respHeadersContent')!;
 
-      rawText.textContent = response.body || response.error || 'No content';
+      rawBox.textContent = response.body || response.error || 'No content';
 
       if (response.isJson && response.body) {
         try {
           const parsed = JSON.parse(response.body);
-          prettyEmpty.classList.add('hidden');
-          prettyTree.classList.remove('hidden');
-          JsonViewer.render(parsed, prettyTree);
+          emptyState.classList.add('hidden');
+          jsonTree.classList.remove('hidden');
+          JsonViewer.render(parsed, jsonTree);
         } catch {
-          prettyEmpty.classList.remove('hidden');
-          prettyTree.classList.add('hidden');
+          emptyState.classList.remove('hidden');
+          jsonTree.classList.add('hidden');
         }
       } else {
-        prettyEmpty.classList.remove('hidden');
-        prettyTree.classList.add('hidden');
+        emptyState.classList.remove('hidden');
+        jsonTree.classList.add('hidden');
       }
 
-      // Headers list
-      headersList.innerHTML = Object.entries(response.headers)
-        .map(([k, v]) => `<div class="header-row"><span class="header-name">${k}:</span><span class="header-val">${v}</span></div>`)
+      headersContent.innerHTML = Object.entries(response.headers)
+        .map(([k, v]) => `<div class="header-entry"><span class="header-key">${k}:</span><span class="header-val">${v}</span></div>`)
         .join('');
 
       // Add to history
@@ -807,37 +764,31 @@ export class PanelController {
       this.history.unshift(historyItem);
       this.renderHistorySidebar();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      pill.textContent = 'Error';
-      pill.className = 'metric-pill badge-5xx';
-      document.getElementById('respRawText')!.textContent = `Execution failed: ${msg}`;
+      badge.textContent = 'Error';
+      badge.className = 'status-badge badge-5xx';
+      document.getElementById('respRawContent')!.textContent = String(err);
     } finally {
       sendBtn.disabled = false;
-      sendBtn.textContent = 'Send';
+      sendBtn.textContent = 'Send Request';
     }
   }
 
-  // --- Collections & History Sidebar Rendering ---
+  // --- Collections, History, Environments Rendering ---
   private renderCollectionsSidebar(): void {
-    const container = document.getElementById('collectionsTree')!;
+    const list = document.getElementById('collectionsItemsList')!;
     if (this.collections.length === 0) {
-      container.innerHTML = '<div class="empty-state">No collections yet. Click "+ New Collection" above.</div>';
+      list.innerHTML = '<div class="empty-state">No collections yet.</div>';
       return;
     }
-
-    container.innerHTML = '';
+    list.innerHTML = '';
     this.collections.forEach(col => {
-      const colDiv = document.createElement('div');
-      colDiv.className = 'collection-folder';
-      colDiv.innerHTML = `
-        <div class="sidebar-item folder-header">
-          <div class="item-left">📁 <strong>${col.name}</strong></div>
-          <button class="btn-micro btn-del-col" title="Delete Collection">&times;</button>
-        </div>
-        <div class="folder-items" id="col_items_${col.id}"></div>
+      const item = document.createElement('div');
+      item.className = 'sidebar-item';
+      item.innerHTML = `
+        <div class="item-title-row">📁 <strong>${col.name}</strong></div>
+        <button class="btn-micro" style="color:#ef4444;">&times;</button>
       `;
-
-      colDiv.querySelector('.btn-del-col')?.addEventListener('click', (e) => {
+      item.querySelector('button')?.addEventListener('click', (e) => {
         e.stopPropagation();
         if (confirm(`Delete collection "${col.name}"?`)) {
           storage.deleteCollection(col.id).then(() => {
@@ -846,101 +797,120 @@ export class PanelController {
           });
         }
       });
-
-      const itemsContainer = colDiv.querySelector(`#col_items_${col.id}`)!;
-      const childRequests = this.savedRequests.filter(r => r.collectionId === col.id);
-      childRequests.forEach(req => {
-        const item = document.createElement('div');
-        item.className = 'sidebar-item req-item';
-        item.innerHTML = `
-          <div class="item-left">
-            <span class="sidebar-method-badge badge-${req.method.toLowerCase()}">${req.method}</span>
-            <span>${req.name}</span>
-          </div>
-        `;
-        item.onclick = () => this.addNewWorkspaceTab(req);
-        itemsContainer.appendChild(item);
-      });
-
-      container.appendChild(colDiv);
+      list.appendChild(item);
     });
   }
 
   private renderHistorySidebar(): void {
-    const container = document.getElementById('historyList')!;
+    const list = document.getElementById('historyItemsList')!;
     if (this.history.length === 0) {
-      container.innerHTML = '<div class="empty-state">No request history yet.</div>';
+      list.innerHTML = '<div class="empty-state">No request history yet.</div>';
       return;
     }
-
-    container.innerHTML = '';
+    list.innerHTML = '';
     this.history.forEach(h => {
       const item = document.createElement('div');
-      item.className = 'sidebar-item history-item';
-      const statusBadge = h.response.status >= 200 && h.response.status < 300 ? 'badge-2xx' : 'badge-4xx';
+      item.className = 'sidebar-item';
       item.innerHTML = `
-        <div class="item-left">
-          <span class="sidebar-method-badge badge-${h.request.method.toLowerCase()}">${h.request.method}</span>
+        <div class="item-title-row">
+          <span class="method-tag">${h.request.method}</span>
           <span title="${h.request.url}">${h.request.name || h.request.url}</span>
         </div>
-        <span class="badge-status ${statusBadge}">${h.response.status}</span>
+        <span class="time-tag">${h.response.status}</span>
       `;
       item.onclick = () => this.addNewWorkspaceTab(h.request);
-      container.appendChild(item);
+      list.appendChild(item);
     });
   }
 
-  // --- Environments Management ---
   private renderEnvironmentsDropdown(): void {
     const select = document.getElementById('activeEnvSelect') as HTMLSelectElement;
     if (!select) return;
-    select.innerHTML = '<option value="">No Environment</option>';
+    select.innerHTML = '<option value="">None</option>';
     this.environments.forEach(env => {
       const opt = document.createElement('option');
       opt.value = env.id;
       opt.textContent = env.name;
-      if (this.activeEnv && this.activeEnv.id === env.id) opt.selected = true;
+      if (this.activeEnv?.id === env.id) opt.selected = true;
       select.appendChild(opt);
     });
   }
 
   private renderEnvironmentsSidebar(): void {
-    const container = document.getElementById('environmentsList')!;
+    const list = document.getElementById('environmentsItemsList')!;
     if (this.environments.length === 0) {
-      container.innerHTML = '<div class="empty-state">No environments configured.</div>';
+      list.innerHTML = '<div class="empty-state">No environments configured.</div>';
       return;
     }
-
-    container.innerHTML = '';
+    list.innerHTML = '';
     this.environments.forEach(env => {
       const item = document.createElement('div');
-      item.className = 'sidebar-item env-item';
+      item.className = 'sidebar-item';
       item.innerHTML = `
-        <div class="item-left">🌐 <span>${env.name}</span> (${env.variables.length} vars)</div>
-        <button class="btn-micro btn-del-env">&times;</button>
+        <div class="item-title-row">🌐 <strong>${env.name}</strong> (${env.variables.length} vars)</div>
+        <button class="btn-micro" style="color:#ef4444;">&times;</button>
       `;
-
-      item.querySelector('.btn-del-env')?.addEventListener('click', (e) => {
+      item.querySelector('button')?.addEventListener('click', (e) => {
         e.stopPropagation();
         if (confirm(`Delete environment "${env.name}"?`)) {
           storage.deleteEnvironment(env.id).then(() => {
-            this.environments = this.environments.filter(e => e.id !== env.id);
+            this.environments = this.environments.filter(en => en.id !== env.id);
             if (this.activeEnv?.id === env.id) this.activeEnv = null;
             this.renderEnvironmentsDropdown();
             this.renderEnvironmentsSidebar();
           });
         }
       });
-
-      item.onclick = () => this.openEnvironmentModal(env);
-      container.appendChild(item);
+      item.onclick = () => this.openEnvModal(env);
+      list.appendChild(item);
     });
   }
 
-  private openEnvironmentModal(env?: Environment): void {
-    const modal = document.getElementById('envModal') as HTMLDialogElement;
+  // --- Modals ---
+  private openSaveModal(): void {
+    this.saveActiveFormIntoTab();
+    const tab = this.getActiveTab();
+    if (!tab) return;
+
+    const modal = document.getElementById('modalSaveRequest') as HTMLDialogElement;
+    const nameInput = document.getElementById('saveReqName') as HTMLInputElement;
+    const colSelect = document.getElementById('saveReqCollectionSelect') as HTMLSelectElement;
+
+    nameInput.value = tab.name;
+    colSelect.innerHTML = '<option value="">(No collection)</option>';
+    this.collections.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      if (tab.collectionId === c.id) opt.selected = true;
+      colSelect.appendChild(opt);
+    });
+
+    modal.showModal();
+  }
+
+  private async confirmSave(): Promise<void> {
+    const tab = this.getActiveTab();
+    if (!tab) return;
+
+    const modal = document.getElementById('modalSaveRequest') as HTMLDialogElement;
+    const name = (document.getElementById('saveReqName') as HTMLInputElement).value.trim();
+    const colId = (document.getElementById('saveReqCollectionSelect') as HTMLSelectElement).value;
+
+    tab.name = name || 'Untitled Request';
+    tab.collectionId = colId || undefined;
+    tab.updatedAt = Date.now();
+
+    await storage.saveRequest(tab);
+    this.renderWorkspaceTabs();
+    this.renderCollectionsSidebar();
+    modal.close();
+  }
+
+  private openEnvModal(env?: Environment): void {
+    const modal = document.getElementById('modalEnvironment') as HTMLDialogElement;
     const nameInput = document.getElementById('envNameInput') as HTMLInputElement;
-    const rows = document.getElementById('envVarRows')!;
+    const rows = document.getElementById('envModalVars')!;
     rows.innerHTML = '';
 
     if (env) {
@@ -957,31 +927,28 @@ export class PanelController {
   }
 
   private addEnvVarRow(k: string, v: string): void {
-    const rows = document.getElementById('envVarRows')!;
+    const rows = document.getElementById('envModalVars')!;
     const row = document.createElement('div');
     row.className = 'kv-row';
     row.innerHTML = `
-      <input type="text" class="kv-input env-var-key" placeholder="Variable name" value="${k}">
-      <input type="text" class="kv-input env-var-val" placeholder="Value" value="${v}">
-      <button class="btn-remove-row">&times;</button>
+      <input type="text" class="kv-input env-k" placeholder="Key" value="${k}">
+      <input type="text" class="kv-input env-v" placeholder="Value" value="${v}">
+      <button class="btn-micro" style="color:#ef4444;">&times;</button>
     `;
-    row.querySelector('.btn-remove-row')?.addEventListener('click', () => row.remove());
+    row.querySelector('button')?.addEventListener('click', () => row.remove());
     rows.appendChild(row);
   }
 
-  private async saveEnvironmentModal(): Promise<void> {
-    const modal = document.getElementById('envModal') as HTMLDialogElement;
+  private async saveEnvModal(): Promise<void> {
+    const modal = document.getElementById('modalEnvironment') as HTMLDialogElement;
     const nameInput = document.getElementById('envNameInput') as HTMLInputElement;
     const name = nameInput.value.trim();
-    if (!name) {
-      alert('Please enter an environment name');
-      return;
-    }
+    if (!name) return;
 
     const variables: Environment['variables'] = [];
-    document.querySelectorAll('#envVarRows .kv-row').forEach(row => {
-      const k = (row.querySelector('.env-var-key') as HTMLInputElement)?.value.trim();
-      const v = (row.querySelector('.env-var-val') as HTMLInputElement)?.value;
+    document.querySelectorAll('#envModalVars .kv-row').forEach(row => {
+      const k = (row.querySelector('.env-k') as HTMLInputElement)?.value.trim();
+      const v = (row.querySelector('.env-v') as HTMLInputElement)?.value;
       if (k) variables.push({ id: Math.random().toString(), key: k, value: v, enabled: true });
     });
 
@@ -996,8 +963,8 @@ export class PanelController {
     };
 
     await storage.saveEnvironment(env);
-    const existingIdx = this.environments.findIndex(e => e.id === env.id);
-    if (existingIdx >= 0) this.environments[existingIdx] = env;
+    const idx = this.environments.findIndex(e => e.id === env.id);
+    if (idx >= 0) this.environments[idx] = env;
     else this.environments.push(env);
 
     this.activeEnv = env;
@@ -1005,56 +972,9 @@ export class PanelController {
     this.renderEnvironmentsSidebar();
     modal.close();
   }
-
-  // --- Save Request Modal ---
-  private openSaveRequestModal(): void {
-    this.saveActiveFormIntoTab();
-    const tab = this.getActiveTab();
-    if (!tab) return;
-
-    const modal = document.getElementById('saveReqModal') as HTMLDialogElement;
-    const nameInput = document.getElementById('saveReqNameInput') as HTMLInputElement;
-    const colSelect = document.getElementById('saveReqCollectionSelect') as HTMLSelectElement;
-
-    nameInput.value = tab.name;
-    colSelect.innerHTML = '<option value="">No Collection</option>';
-    this.collections.forEach(c => {
-      const opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = c.name;
-      if (tab.collectionId === c.id) opt.selected = true;
-      colSelect.appendChild(opt);
-    });
-
-    modal.showModal();
-  }
-
-  private async confirmSaveRequest(): Promise<void> {
-    const tab = this.getActiveTab();
-    if (!tab) return;
-
-    const modal = document.getElementById('saveReqModal') as HTMLDialogElement;
-    const name = (document.getElementById('saveReqNameInput') as HTMLInputElement).value.trim();
-    const colId = (document.getElementById('saveReqCollectionSelect') as HTMLSelectElement).value;
-
-    tab.name = name || 'Untitled Request';
-    tab.collectionId = colId || undefined;
-    tab.updatedAt = Date.now();
-
-    await storage.saveRequest(tab);
-
-    const existingIdx = this.savedRequests.findIndex(r => r.id === tab.id);
-    if (existingIdx >= 0) this.savedRequests[existingIdx] = tab;
-    else this.savedRequests.push(tab);
-
-    this.renderWorkspaceTabs();
-    this.renderCollectionsSidebar();
-    modal.close();
-  }
 }
 
-// Bootstrap when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   const panel = new PanelController();
-  panel.init().catch(err => console.error('Panel initialization failed:', err));
+  panel.init().catch(err => console.error('Panel init error:', err));
 });

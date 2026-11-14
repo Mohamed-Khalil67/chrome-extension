@@ -7,335 +7,316 @@
   <link rel="stylesheet" href="panel.css">
 </head>
 <body>
-  <!-- Top Navigation & Header -->
+  <!-- Clean Top Bar -->
   <header class="app-header">
-    <div class="brand-section">
-      <div class="brand-logo">🔍</div>
-      <div class="brand-title">Frontend Lens</div>
-      <div class="session-badge" id="tabSessionBadge">Tab: --</div>
+    <div class="brand">
+      <span class="brand-title">Frontend Lens</span>
+      <span class="status-indicator">
+        <span class="status-dot"></span>
+        <span id="tabTargetDisplay">Connected</span>
+      </span>
     </div>
 
-    <!-- Main Mode Switcher -->
-    <div class="mode-switcher">
-      <button class="mode-btn active" id="btnModeDebugger">
-        <span class="icon">⚡</span> Frontend Debugger
+    <!-- The Only Two Main Sections -->
+    <nav class="main-nav">
+      <button class="nav-btn active" id="btnNavMonitor">
+        <span class="nav-icon">⚡</span>
+        <span class="nav-text">Monitor</span>
       </button>
-      <button class="mode-btn" id="btnModeWorkspace">
-        <span class="icon">🚀</span> API Client Workspace
+      <button class="nav-btn" id="btnNavWorkspace">
+        <span class="nav-icon">🚀</span>
+        <span class="nav-text">API Client</span>
       </button>
-    </div>
+    </nav>
 
-    <div class="header-actions">
-      <div class="env-selector-container">
+    <div class="top-actions">
+      <div class="env-chip">
         <span class="env-label">Env:</span>
-        <select id="activeEnvSelect" class="env-dropdown">
-          <option value="">No Environment</option>
+        <select id="activeEnvSelect" class="clean-select">
+          <option value="">None</option>
         </select>
       </div>
-      <button class="btn-action" id="btnClearSession" title="Clear recorded data">Clear</button>
+      <button class="btn-ghost" id="btnClearMonitor" title="Clear captured traffic">Clear</button>
     </div>
   </header>
 
   <!-- ============================================== -->
-  <!-- 1. FRONTEND DEBUGGER VIEW                       -->
+  <!-- 1. MONITOR SCREEN                               -->
   <!-- ============================================== -->
-  <main class="view-container" id="viewDebugger">
-    <!-- Sub-navigation -->
-    <nav class="sub-nav">
-      <button class="sub-nav-btn active" data-target="debuggerNetwork">Network Inspector</button>
-      <button class="sub-nav-btn" data-target="debuggerUI">UI & Layout Inspector</button>
-      <div class="sub-nav-filter" id="netFilterContainer">
-        <input type="text" id="netFilterInput" placeholder="Filter URL or status..." class="filter-input">
-        <span class="request-count-badge" id="netRequestCount">0 requests</span>
+  <main class="screen active" id="screenMonitor">
+    <!-- Monitor Header / Metric Cards -->
+    <div class="monitor-metrics-bar">
+      <div class="metrics-left">
+        <h1 class="screen-heading">Monitor</h1>
+        <span class="live-pill"><span class="pulse-dot"></span> Recording</span>
       </div>
-    </nav>
+      <div class="metrics-cards">
+        <div class="metric-card">
+          <span class="metric-number" id="metricTotalRequests">0</span>
+          <span class="metric-label">Requests</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-number error" id="metricTotalErrors">0</span>
+          <span class="metric-label">Errors</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-number" id="metricAvgDuration">0ms</span>
+          <span class="metric-label">Avg. time</span>
+        </div>
+      </div>
+    </div>
 
-    <!-- Network Inspector View -->
-    <section class="sub-view-section active" id="debuggerNetwork">
-      <div class="split-pane">
-        <!-- Request List Table -->
-        <div class="pane-left">
-          <table class="data-table" id="netTable">
+    <!-- Errors Banner (Shown only when JS/runtime errors occur) -->
+    <div class="errors-drawer hidden" id="errorsDrawer">
+      <div class="errors-header">
+        <span class="errors-title">⚠️ JavaScript Runtime Errors (<span id="errorsCount">0</span>)</span>
+        <button class="btn-micro" id="btnDismissErrors">Dismiss</button>
+      </div>
+      <div class="errors-list" id="errorsList"></div>
+    </div>
+
+    <!-- Split Pane: Captured Requests & Selected Request Detail -->
+    <div class="monitor-body">
+      <!-- Left Pane: Captured Requests Table -->
+      <section class="pane-table">
+        <div class="table-toolbar">
+          <input type="text" id="netSearchInput" class="clean-search" placeholder="Filter requests by URL, method, status...">
+        </div>
+        <div class="table-wrapper">
+          <table class="requests-table">
             <thead>
               <tr>
-                <th style="width: 75px;">Status</th>
-                <th style="width: 70px;">Method</th>
-                <th>URL Path</th>
-                <th style="width: 75px;">Time</th>
-                <th style="width: 75px;">Size</th>
+                <th style="width: 80px;">Status</th>
+                <th style="width: 65px;">Method</th>
+                <th>Request URL</th>
+                <th style="width: 60px;">Type</th>
+                <th style="width: 75px; text-align: right;">Time</th>
               </tr>
             </thead>
             <tbody id="netTableBody">
               <tr class="empty-row">
-                <td colspan="5">Waiting for network requests in inspected tab...</td>
+                <td colspan="5">Waiting for application traffic in inspected tab...</td>
               </tr>
             </tbody>
           </table>
         </div>
+      </section>
 
-        <!-- Request Details Pane -->
-        <div class="pane-right" id="netDetailPane">
-          <div class="detail-empty" id="netDetailEmpty">Select a request on the left to inspect headers, payload, and response.</div>
-          <div class="detail-content hidden" id="netDetailContent">
-            <div class="detail-subtabs">
-              <button class="detail-tab active" data-subtab="netSubOverview">Overview</button>
-              <button class="detail-tab" data-subtab="netSubHeaders">Headers</button>
-              <button class="detail-tab" data-subtab="netSubPayload">Payload</button>
-              <button class="detail-tab" data-subtab="netSubResponse">Response Body</button>
-            </div>
-
-            <!-- Overview -->
-            <div class="detail-section active" id="netSubOverview">
-              <div class="overview-grid">
-                <div class="overview-row"><span class="k">Request URL:</span><span class="v" id="detailUrl">-</span></div>
-                <div class="overview-row"><span class="k">Status Code:</span><span class="v" id="detailStatus">-</span></div>
-                <div class="overview-row"><span class="k">Method:</span><span class="v" id="detailMethod">-</span></div>
-                <div class="overview-row"><span class="k">Latency:</span><span class="v" id="detailLatency">-</span></div>
-                <div class="overview-row"><span class="k">Payload Size:</span><span class="v" id="detailSize">-</span></div>
-                <div class="overview-row"><span class="k">MIME Type:</span><span class="v" id="detailMime">-</span></div>
-                <div class="overview-row" id="appErrorRow" style="display:none;">
-                  <span class="k">Application Result:</span>
-                  <span class="v app-error-banner" id="detailAppError">-</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Headers -->
-            <div class="detail-section" id="netSubHeaders">
-              <div class="headers-block">
-                <div class="headers-heading">Response Headers</div>
-                <div class="headers-list" id="detailResHeaders">-</div>
-              </div>
-              <div class="headers-block">
-                <div class="headers-heading">Request Headers</div>
-                <div class="headers-list" id="detailReqHeaders">-</div>
-              </div>
-            </div>
-
-            <!-- Payload -->
-            <div class="detail-section" id="netSubPayload">
-              <pre class="code-preview" id="detailPayloadText">No payload sent with this request.</pre>
-            </div>
-
-            <!-- Response -->
-            <div class="detail-section" id="netSubResponse">
-              <div class="response-toolbar">
-                <button class="btn-micro" id="btnTogglePrettyJson">Pretty Tree</button>
-                <button class="btn-micro" id="btnCopyResponseBody">Copy</button>
-              </div>
-              <div id="detailResponseFormatted" class="response-formatted-container"></div>
-              <pre id="detailResponseRaw" class="code-preview hidden"></pre>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- UI Inspector View -->
-    <section class="sub-view-section" id="debuggerUI">
-      <div class="ui-inspector-header">
-        <button class="btn-primary" id="btnInspectSelectedElement">🔍 Inspect Selected DOM Element ($0)</button>
-        <span class="hint-text">Select an element in Chrome DevTools' Elements tab, then click Inspect.</span>
-      </div>
-
-      <div class="ui-inspector-layout">
-        <!-- Diagnostic Summary -->
-        <div class="ui-col ui-col-info">
-          <div class="card">
-            <div class="card-title">Element Identification</div>
-            <div class="element-selector-pill" id="uiSelectorPill">&lt;select an element&gt;</div>
-            <div class="properties-list" id="uiAttributesList">
-              <div class="empty-state">No element inspected yet.</div>
-            </div>
-          </div>
-
-          <!-- Warnings and Diagnostics -->
-          <div class="card">
-            <div class="card-title">Diagnostics & Layout Warnings</div>
-            <div id="uiWarningsContainer">
-              <div class="alert-info">No warnings detected for the inspected element.</div>
-            </div>
-          </div>
+      <!-- Right Pane: Selected Request Details -->
+      <section class="pane-detail" id="requestDetailPane">
+        <div class="detail-placeholder" id="detailPlaceholder">
+          Select a request on the left to inspect its headers, payload, and response.
         </div>
 
-        <!-- Box Model Visualizer -->
-        <div class="ui-col ui-col-diagram">
-          <div class="card">
-            <div class="card-title">Box Model & Dimensions</div>
-            <div id="uiBoxModelContainer"></div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Key Computed Styles</div>
-            <div class="computed-styles-grid" id="uiComputedStylesGrid">
-              <div class="style-row"><span class="k">Display:</span><span class="v" id="styleDisplay">-</span></div>
-              <div class="style-row"><span class="k">Position:</span><span class="v" id="stylePosition">-</span></div>
-              <div class="style-row"><span class="k">Overflow:</span><span class="v" id="styleOverflow">-</span></div>
-              <div class="style-row"><span class="k">Box-Sizing:</span><span class="v" id="styleBoxSizing">-</span></div>
-              <div class="style-row"><span class="k">Z-Index:</span><span class="v" id="styleZIndex">-</span></div>
+        <div class="detail-container hidden" id="detailContainer">
+          <!-- Detail Header -->
+          <div class="detail-header">
+            <div class="detail-header-left">
+              <span class="status-pill" id="detailStatusPill">200 OK</span>
+              <span class="detail-method" id="detailMethod">GET</span>
+              <span class="detail-url" id="detailUrlPath" title="">/api/products</span>
+            </div>
+            <div class="detail-header-right">
+              <button class="btn-secondary" id="btnCloneToWorkspace" title="Open this request in the API Client">
+                🚀 Open in API Client
+              </button>
             </div>
           </div>
+
+          <!-- Application Failure Alert Banner -->
+          <div class="app-error-alert hidden" id="detailAppErrorAlert">
+            <strong>Application Failure Detected:</strong>
+            <span id="detailAppErrorMessage"></span>
+          </div>
+
+          <!-- Detail Tabs (Headers | Payload | Response) -->
+          <div class="detail-tabs-bar">
+            <button class="tab-btn active" data-tab="tabDetailHeaders">Headers</button>
+            <button class="tab-btn" data-tab="tabDetailPayload">Payload</button>
+            <button class="tab-btn" data-tab="tabDetailResponse">Response</button>
+          </div>
+
+          <!-- Headers View -->
+          <div class="detail-tab-content active" id="tabDetailHeaders">
+            <div class="section-group">
+              <h3 class="group-title">Response Headers</h3>
+              <div class="headers-block" id="detailResponseHeaders">-</div>
+            </div>
+            <div class="section-group">
+              <h3 class="group-title">Request Headers</h3>
+              <div class="headers-block" id="detailRequestHeaders">-</div>
+            </div>
+          </div>
+
+          <!-- Payload View -->
+          <div class="detail-tab-content" id="tabDetailPayload">
+            <pre class="raw-box" id="detailPayloadBox">No request payload.</pre>
+          </div>
+
+          <!-- Response View -->
+          <div class="detail-tab-content" id="tabDetailResponse">
+            <div class="response-actions">
+              <button class="btn-micro" id="btnTogglePrettyView">Raw Text</button>
+              <button class="btn-micro" id="btnCopyResponse">Copy</button>
+            </div>
+            <div id="detailJsonViewer" class="json-tree-wrapper"></div>
+            <pre class="raw-box hidden" id="detailRawResponse"></pre>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </div>
   </main>
 
   <!-- ============================================== -->
-  <!-- 2. API CLIENT WORKSPACE VIEW (Postman-like)    -->
+  <!-- 2. API CLIENT SCREEN                            -->
   <!-- ============================================== -->
-  <main class="view-container hidden" id="viewWorkspace">
-    <div class="workspace-layout">
-      <!-- Left Sidebar: Collections & History -->
-      <aside class="workspace-sidebar">
-        <div class="sidebar-tabs">
-          <button class="sidebar-tab active" data-sidetab="sideCollections">Collections</button>
-          <button class="sidebar-tab" data-sidetab="sideHistory">History</button>
-          <button class="sidebar-tab" data-sidetab="sideEnvironments">Environments</button>
+  <main class="screen hidden" id="screenWorkspace">
+    <div class="client-layout">
+      <!-- Sidebar: Collections, History, Environments -->
+      <aside class="client-sidebar">
+        <div class="sidebar-nav">
+          <button class="s-nav-btn active" data-section="secHistory">History</button>
+          <button class="s-nav-btn" data-section="secCollections">Collections</button>
+          <button class="s-nav-btn" data-section="secEnvironments">Environments</button>
         </div>
 
-        <!-- Collections Tab -->
-        <div class="sidebar-content active" id="sideCollections">
-          <div class="sidebar-action-bar">
-            <button class="btn-micro" id="btnCreateCollection">+ New Collection</button>
-          </div>
-          <div class="collections-tree" id="collectionsTree">
-            <div class="empty-state">No collections yet. Save requests to organize them.</div>
-          </div>
-        </div>
-
-        <!-- History Tab -->
-        <div class="sidebar-content" id="sideHistory">
-          <div class="sidebar-action-bar">
+        <!-- History -->
+        <div class="sidebar-panel active" id="secHistory">
+          <div class="sidebar-panel-header">
             <button class="btn-micro" id="btnClearHistory">Clear All</button>
           </div>
-          <div class="history-list" id="historyList">
+          <div class="items-list" id="historyItemsList">
             <div class="empty-state">No request history yet.</div>
           </div>
         </div>
 
-        <!-- Environments Tab -->
-        <div class="sidebar-content" id="sideEnvironments">
-          <div class="sidebar-action-bar">
+        <!-- Collections -->
+        <div class="sidebar-panel" id="secCollections">
+          <div class="sidebar-panel-header">
+            <button class="btn-micro" id="btnCreateCollection">+ New Collection</button>
+          </div>
+          <div class="items-list" id="collectionsItemsList">
+            <div class="empty-state">No collections saved.</div>
+          </div>
+        </div>
+
+        <!-- Environments -->
+        <div class="sidebar-panel" id="secEnvironments">
+          <div class="sidebar-panel-header">
             <button class="btn-micro" id="btnCreateEnv">+ New Environment</button>
           </div>
-          <div class="environments-list" id="environmentsList">
+          <div class="items-list" id="environmentsItemsList">
             <div class="empty-state">No environments configured.</div>
           </div>
         </div>
       </aside>
 
       <!-- Main Request Editor & Runner -->
-      <section class="workspace-main">
-        <!-- Open Request Tabs Bar -->
-        <div class="request-tabs-bar" id="requestTabsBar">
-          <!-- Request tab pills dynamically injected here -->
-          <button class="new-tab-btn" id="btnNewRequestTab" title="New Request Tab">+</button>
+      <section class="client-main">
+        <!-- Request Tabs Bar -->
+        <div class="request-tabs-strip" id="requestTabsStrip">
+          <!-- Dynamic Tabs -->
+          <button class="add-tab-btn" id="btnAddRequestTab" title="New Request">+</button>
         </div>
 
-        <!-- Request Address Bar -->
-        <div class="address-bar">
-          <select id="reqMethodSelect" class="method-dropdown">
+        <!-- Address & Action Bar -->
+        <div class="request-bar">
+          <select id="reqMethodSelect" class="method-select">
             <option value="GET">GET</option>
             <option value="POST">POST</option>
             <option value="PUT">PUT</option>
             <option value="PATCH">PATCH</option>
             <option value="DELETE">DELETE</option>
-            <option value="HEAD">HEAD</option>
-            <option value="OPTIONS">OPTIONS</option>
           </select>
-          <input type="text" id="reqUrlInput" class="url-input" placeholder="Enter request URL (e.g. https://api.example.com/users or {{baseUrl}}/items)">
+          <input type="text" id="reqUrlInput" class="url-field" placeholder="Enter request URL (e.g. {{baseUrl}}/api/users)">
           
-          <div class="exec-mode-wrapper" title="Choose whether to send using Inspected Page cookies/context or Extension context">
-            <select id="reqExecModeSelect" class="exec-dropdown">
-              <option value="inspected-page">🌐 Inspected Page</option>
-              <option value="extension-context">⚡ Extension Context</option>
-            </select>
-          </div>
+          <select id="reqExecModeSelect" class="mode-select" title="Execution context">
+            <option value="inspected-page">🌐 Inspected Page</option>
+            <option value="extension-context">⚡ Extension Context</option>
+          </select>
 
-          <button class="btn-send" id="btnSendRequest">Send</button>
-          <button class="btn-save" id="btnSaveRequest" title="Save to collection">Save</button>
+          <button class="btn-send" id="btnSendRequest">Send Request</button>
+          <button class="btn-ghost" id="btnSaveToCollection" title="Save to collection">Save</button>
         </div>
 
-        <!-- Request Configuration Area -->
-        <div class="request-config-panel">
-          <div class="config-tabs">
-            <button class="config-tab active" data-cfg="cfgParams">Params</button>
-            <button class="config-tab" data-cfg="cfgHeaders">Headers</button>
-            <button class="config-tab" data-cfg="cfgAuth">Authorization</button>
-            <button class="config-tab" data-cfg="cfgBody">Body</button>
+        <!-- Request Configuration (Params | Headers | Body | Auth) -->
+        <div class="request-config">
+          <div class="config-tabs-bar">
+            <button class="cfg-btn active" data-cfg="cfgParams">Params</button>
+            <button class="cfg-btn" data-cfg="cfgHeaders">Headers</button>
+            <button class="cfg-btn" data-cfg="cfgBody">Body</button>
+            <button class="cfg-btn" data-cfg="cfgAuth">Auth</button>
           </div>
 
-          <!-- Query Params -->
-          <div class="config-section active" id="cfgParams">
-            <div class="kv-table" id="paramsKvTable">
+          <!-- Params -->
+          <div class="cfg-content active" id="cfgParams">
+            <div class="kv-grid" id="paramsGrid">
               <div class="kv-header"><span>Key</span><span>Value</span><span></span></div>
-              <div class="kv-rows" id="paramsKvRows"></div>
-              <button class="btn-micro" id="btnAddParamRow">+ Add Parameter</button>
+              <div class="kv-rows" id="paramsRows"></div>
             </div>
+            <button class="btn-micro add-row-btn" id="btnAddParamRow">+ Add Parameter</button>
           </div>
 
           <!-- Headers -->
-          <div class="config-section" id="cfgHeaders">
-            <div class="kv-table" id="headersKvTable">
+          <div class="cfg-content" id="cfgHeaders">
+            <div class="kv-grid" id="headersGrid">
               <div class="kv-header"><span>Key</span><span>Value</span><span></span></div>
-              <div class="kv-rows" id="headersKvRows"></div>
-              <button class="btn-micro" id="btnAddHeaderRow">+ Add Header</button>
+              <div class="kv-rows" id="headersRows"></div>
             </div>
+            <button class="btn-micro add-row-btn" id="btnAddHeaderRow">+ Add Header</button>
           </div>
 
-          <!-- Authorization -->
-          <div class="config-section" id="cfgAuth">
-            <div class="auth-config-row">
-              <label>Type:</label>
-              <select id="authTypeSelect" class="form-dropdown">
+          <!-- Body -->
+          <div class="cfg-content" id="cfgBody">
+            <div class="body-options-bar">
+              <label><input type="radio" name="reqBodyFormat" value="none" checked> None</label>
+              <label><input type="radio" name="reqBodyFormat" value="json"> JSON</label>
+              <label><input type="radio" name="reqBodyFormat" value="raw"> Raw</label>
+              <button class="btn-micro" id="btnFormatJson" style="margin-left: auto;">Format JSON</button>
+            </div>
+            <textarea id="reqBodyEditor" class="code-editor" placeholder="JSON or text payload..."></textarea>
+          </div>
+
+          <!-- Auth -->
+          <div class="cfg-content" id="cfgAuth">
+            <div class="auth-row">
+              <label>Auth Type:</label>
+              <select id="authTypeSelect" class="clean-select">
                 <option value="none">No Auth</option>
                 <option value="bearer">Bearer Token</option>
                 <option value="basic">Basic Auth</option>
                 <option value="apiKey">API Key</option>
               </select>
             </div>
-            <div class="auth-details" id="authDetailsContainer">
-              <!-- Dynamically populated auth fields -->
-            </div>
-          </div>
-
-          <!-- Body -->
-          <div class="config-section" id="cfgBody">
-            <div class="body-type-bar">
-              <label><input type="radio" name="bodyType" value="none" checked> none</label>
-              <label><input type="radio" name="bodyType" value="json"> JSON</label>
-              <label><input type="radio" name="bodyType" value="raw"> raw</label>
-              <button class="btn-micro" id="btnFormatJsonBody" style="margin-left: auto;">Format JSON</button>
-            </div>
-            <textarea id="reqBodyTextarea" class="body-textarea" placeholder="Request body payload (JSON / text)"></textarea>
+            <div class="auth-inputs-container" id="authInputsContainer"></div>
           </div>
         </div>
 
-        <!-- Response Area -->
-        <div class="response-panel">
-          <div class="response-header">
-            <div class="response-metrics">
-              <span class="metric-pill status-neutral" id="respStatusPill">Status: --</span>
-              <span class="metric-item">Time: <strong id="respDurationText">-- ms</strong></span>
-              <span class="metric-item">Size: <strong id="respSizeText">-- B</strong></span>
+        <!-- Response Viewer -->
+        <div class="response-card">
+          <div class="response-top-bar">
+            <div class="resp-stats">
+              <span class="status-badge" id="respStatusBadge">--</span>
+              <span class="stat-text" id="respDurationText">-- ms</span>
+              <span class="stat-text" id="respSizeText">-- B</span>
             </div>
-            <div class="response-subtabs">
-              <button class="resp-tab active" data-resptab="respPretty">Pretty JSON</button>
-              <button class="resp-tab" data-resptab="respRaw">Raw</button>
-              <button class="resp-tab" data-resptab="respHeaders">Headers</button>
+            <div class="resp-view-modes">
+              <button class="resp-mode-btn active" data-resp="respJson">Pretty JSON</button>
+              <button class="resp-mode-btn" data-resp="respRaw">Raw</button>
+              <button class="resp-mode-btn" data-resp="respHeaders">Headers</button>
             </div>
           </div>
 
-          <div class="response-body-wrapper">
-            <div class="resp-content active" id="respPretty">
-              <div class="empty-state" id="respPrettyEmpty">Hit Send to dispatch the request.</div>
-              <div id="respPrettyTree" class="json-viewer-container"></div>
+          <div class="response-content-area">
+            <div class="resp-pane active" id="respJson">
+              <div class="empty-state" id="respEmptyState">Click Send Request to view the response.</div>
+              <div id="respJsonTree" class="json-tree-wrapper"></div>
             </div>
-            <div class="resp-content" id="respRaw">
-              <pre class="code-preview" id="respRawText">No response data yet.</pre>
+            <div class="resp-pane" id="respRaw">
+              <pre class="raw-box" id="respRawContent">No response data.</pre>
             </div>
-            <div class="resp-content" id="respHeaders">
-              <div class="headers-list" id="respHeadersList">No response headers yet.</div>
+            <div class="resp-pane" id="respHeaders">
+              <div class="headers-block" id="respHeadersContent">No response headers.</div>
             </div>
           </div>
         </div>
@@ -343,42 +324,43 @@
     </div>
   </main>
 
-  <!-- Environment Modal -->
-  <dialog class="modal-dialog" id="envModal">
-    <div class="modal-header">
-      <div class="modal-title" id="envModalTitle">Manage Environment</div>
-      <button class="btn-close-modal" id="btnCloseEnvModal">&times;</button>
-    </div>
-    <div class="modal-body">
-      <label>Environment Name:</label>
-      <input type="text" id="envNameInput" class="form-input" placeholder="e.g. Local Development">
-      <div class="kv-table" style="margin-top: 12px;">
-        <div class="kv-header"><span>Variable Name</span><span>Initial Value</span><span></span></div>
-        <div class="kv-rows" id="envVarRows"></div>
-        <button class="btn-micro" id="btnAddEnvVarRow">+ Add Variable</button>
+  <!-- Modals -->
+  <!-- Save Request Dialog -->
+  <dialog class="clean-modal" id="modalSaveRequest">
+    <div class="modal-box">
+      <h2 class="modal-title">Save to Collection</h2>
+      <div class="form-group">
+        <label>Request Name:</label>
+        <input type="text" id="saveReqName" class="form-input" placeholder="e.g. Get Products">
       </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-action" id="btnCancelEnvModal">Cancel</button>
-      <button class="btn-primary" id="btnSaveEnvModal">Save Environment</button>
+      <div class="form-group">
+        <label>Collection:</label>
+        <select id="saveReqCollectionSelect" class="clean-select"></select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="btnCancelSave">Cancel</button>
+        <button class="btn-send" id="btnConfirmSave">Save</button>
+      </div>
     </div>
   </dialog>
 
-  <!-- Save Request Modal -->
-  <dialog class="modal-dialog" id="saveReqModal">
-    <div class="modal-header">
-      <div class="modal-title">Save Request to Collection</div>
-      <button class="btn-close-modal" id="btnCloseSaveModal">&times;</button>
-    </div>
-    <div class="modal-body">
-      <label>Request Name:</label>
-      <input type="text" id="saveReqNameInput" class="form-input" placeholder="e.g. Get User Profile">
-      <label style="margin-top: 8px;">Collection:</label>
-      <select id="saveReqCollectionSelect" class="form-dropdown"></select>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-action" id="btnCancelSaveModal">Cancel</button>
-      <button class="btn-primary" id="btnConfirmSaveReq">Save</button>
+  <!-- Environment Dialog -->
+  <dialog class="clean-modal" id="modalEnvironment">
+    <div class="modal-box">
+      <h2 class="modal-title" id="envModalTitle">Configure Environment</h2>
+      <div class="form-group">
+        <label>Environment Name:</label>
+        <input type="text" id="envNameInput" class="form-input" placeholder="e.g. Localhost">
+      </div>
+      <div class="kv-grid" style="margin-top: 10px;">
+        <div class="kv-header"><span>Variable Name</span><span>Value</span><span></span></div>
+        <div class="kv-rows" id="envModalVars"></div>
+      </div>
+      <button class="btn-micro add-row-btn" id="btnAddEnvVar">+ Add Variable</button>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="btnCancelEnv">Cancel</button>
+        <button class="btn-send" id="btnSaveEnv">Save</button>
+      </div>
     </div>
   </dialog>
 
