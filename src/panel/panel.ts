@@ -1,10 +1,15 @@
 import { DevToolsNetworkAdapter } from '../core/adapters/devtools-network.adapter';
 import { RequestExecutor } from '../core/execution/request-executor';
-import { CapturedJsError, CapturedNetworkRequest } from '../core/models/debugger';
+import { CurlImporter } from '../core/importers/curl.importer';
+import { EnvironmentImporter } from '../core/importers/environment.importer';
+import { OpenApiImporter } from '../core/importers/openapi.importer';
+import { PostmanImporter } from '../core/importers/postman.importer';
+import { CapturedJsError, CapturedNetworkRequest, ResourceCategory } from '../core/models/debugger';
 import {
   Collection,
   Environment,
   HttpMethod,
+  KeyValuePair,
   RequestHistoryItem,
   RequestItem
 } from '../core/models/workspace';
@@ -25,10 +30,15 @@ export class PanelController {
   private requests: CapturedNetworkRequest[] = [];
   private selectedRequestId: string | null = null;
   private runtimeErrors: CapturedJsError[] = [];
+  private activeFilterCategory: 'api' | 'document' | 'asset' | 'all' | 'error' = 'api';
+  private filterMethod: string = '';
+  private filterStatus: string = '';
+  private hideCached: boolean = false;
 
   // API Client state
   private openTabs: RequestItem[] = [];
   private activeTabId: string = '';
+  private activeImportTab: 'impPostman' | 'impOpenApi' | 'impCurl' | 'impEnv' = 'impPostman';
 
   async init(): Promise<void> {
     this.detectTabContext();
@@ -68,16 +78,9 @@ export class PanelController {
   private setupEventListeners(): void {
     const btnNavMonitor = document.getElementById('btnNavMonitor');
     const btnNavWorkspace = document.getElementById('btnNavWorkspace');
-    const screenMonitor = document.getElementById('screenMonitor');
-    const screenWorkspace = document.getElementById('screenWorkspace');
 
-    btnNavMonitor?.addEventListener('click', () => {
-      this.switchToScreen('monitor');
-    });
-
-    btnNavWorkspace?.addEventListener('click', () => {
-      this.switchToScreen('workspace');
-    });
+    btnNavMonitor?.addEventListener('click', () => this.switchToScreen('monitor'));
+    btnNavWorkspace?.addEventListener('click', () => this.switchToScreen('workspace'));
 
     // Clear monitor
     document.getElementById('btnClearMonitor')?.addEventListener('click', () => {
@@ -97,9 +100,52 @@ export class PanelController {
       this.updateMonitorMetrics();
     });
 
-    // Search / Filter Monitor
+    // 5 Filter Pills (API, Documents, Assets, All, Errors)
+    document.querySelectorAll('.filter-buttons-group .filter-pill').forEach(pill => {
+      pill.addEventListener('click', (e) => {
+        const cat = (e.currentTarget as HTMLElement).dataset.cat as 'api' | 'document' | 'asset' | 'all' | 'error';
+        document.querySelectorAll('.filter-buttons-group .filter-pill').forEach(p => p.classList.remove('active'));
+        (e.currentTarget as HTMLElement).classList.add('active');
+        this.activeFilterCategory = cat;
+        this.renderRequestsTable();
+      });
+    });
+
+    // Search filter
     const searchInput = document.getElementById('netSearchInput') as HTMLInputElement;
     searchInput?.addEventListener('input', () => this.renderRequestsTable());
+
+    // More Filters Menu
+    const btnMoreFilters = document.getElementById('btnToggleMoreFilters');
+    const moreMenu = document.getElementById('moreFiltersMenu');
+    btnMoreFilters?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      moreMenu?.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', () => {
+      moreMenu?.classList.add('hidden');
+    });
+
+    moreMenu?.addEventListener('click', (e) => e.stopPropagation());
+
+    const filterMethodSelect = document.getElementById('filterMethodSelect') as HTMLSelectElement;
+    filterMethodSelect?.addEventListener('change', () => {
+      this.filterMethod = filterMethodSelect.value;
+      this.renderRequestsTable();
+    });
+
+    const filterStatusSelect = document.getElementById('filterStatusSelect') as HTMLSelectElement;
+    filterStatusSelect?.addEventListener('change', () => {
+      this.filterStatus = filterStatusSelect.value;
+      this.renderRequestsTable();
+    });
+
+    const chkHideCached = document.getElementById('chkHideCached') as HTMLInputElement;
+    chkHideCached?.addEventListener('change', () => {
+      this.hideCached = chkHideCached.checked;
+      this.renderRequestsTable();
+    });
 
     // Monitor Detail Tabs (Headers | Payload | Response)
     document.querySelectorAll('.detail-tabs-bar .tab-btn').forEach(btn => {
@@ -112,9 +158,9 @@ export class PanelController {
       });
     });
 
-    // Clone captured request to API Client
-    document.getElementById('btnCloneToWorkspace')?.addEventListener('click', () => {
-      this.cloneSelectedRequestToWorkspace();
+    // Save to API Client Modal button
+    document.getElementById('btnSaveToApiClient')?.addEventListener('click', () => {
+      this.openSaveCapturedModal();
     });
 
     // Toggle Pretty / Raw Response in Monitor
@@ -142,8 +188,13 @@ export class PanelController {
       }
     });
 
+    // HTML Search inside Document Response
+    const inputHtmlSearch = document.getElementById('inputHtmlSearch') as HTMLInputElement;
+    inputHtmlSearch?.addEventListener('input', () => {
+      this.performHtmlSearch(inputHtmlSearch.value);
+    });
+
     // --- API Client Navigation & Events ---
-    // Sidebar navigation
     document.querySelectorAll('.sidebar-nav .s-nav-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const sec = (e.currentTarget as HTMLElement).dataset.section;
@@ -212,18 +263,48 @@ export class PanelController {
       this.saveEnvModal();
     });
 
+    // Import Modal
+    document.getElementById('btnOpenImportModal')?.addEventListener('click', () => {
+      this.openImportModal();
+    });
+
+    document.getElementById('btnCancelImport')?.addEventListener('click', () => {
+      (document.getElementById('modalImport') as HTMLDialogElement)?.close();
+    });
+
+    document.getElementById('btnConfirmImport')?.addEventListener('click', () => {
+      this.executeImport();
+    });
+
+    // Import Tabs
+    document.querySelectorAll('.import-tabs-bar .imp-tab').forEach(tab => {
+      tab.addEventListener('click', (e) => {
+        const imptab = (e.currentTarget as HTMLElement).dataset.imptab as 'impPostman' | 'impOpenApi' | 'impCurl' | 'impEnv';
+        document.querySelectorAll('.import-tabs-bar .imp-tab').forEach(t => t.classList.remove('active'));
+        (e.currentTarget as HTMLElement).classList.add('active');
+        this.activeImportTab = imptab;
+      });
+    });
+
+    // File Input for Import
+    const fileInput = document.getElementById('importFileInput') as HTMLInputElement;
+    fileInput?.addEventListener('change', () => {
+      const file = fileInput.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const content = evt.target?.result as string;
+          const textarea = document.getElementById('importTextarea') as HTMLTextAreaElement;
+          if (textarea) textarea.value = content;
+        };
+        reader.readAsText(file);
+      }
+    });
+
     // Add row buttons
-    document.getElementById('btnAddParamRow')?.addEventListener('click', () => {
-      this.addParamRow('', '');
-    });
-
-    document.getElementById('btnAddHeaderRow')?.addEventListener('click', () => {
-      this.addHeaderRow('', '');
-    });
-
-    document.getElementById('btnAddEnvVar')?.addEventListener('click', () => {
-      this.addEnvVarRow('', '');
-    });
+    document.getElementById('btnAddParamRow')?.addEventListener('click', () => this.addParamRow('', ''));
+    document.getElementById('btnAddHeaderRow')?.addEventListener('click', () => this.addHeaderRow('', ''));
+    document.getElementById('btnAddEnvVar')?.addEventListener('click', () => this.addEnvVarRow('', ''));
 
     // Format JSON button
     document.getElementById('btnFormatJson')?.addEventListener('click', () => {
@@ -334,7 +415,7 @@ export class PanelController {
     const avgDurationEl = document.getElementById('metricAvgDuration');
 
     const totalRequests = this.requests.length;
-    const httpErrors = this.requests.filter(r => r.status >= 400 || r.statusClassification === 'app-failure' || r.status === 0).length;
+    const httpErrors = this.requests.filter(r => (r.status >= 400 && r.status !== 304) || r.statusClassification === 'app-failure' || r.status === 0).length;
     const totalErrors = httpErrors + this.runtimeErrors.length;
 
     let avgDuration = 0;
@@ -371,19 +452,46 @@ export class PanelController {
 
   private renderRequestsTable(): void {
     const tbody = document.getElementById('netTableBody');
-    const filter = (document.getElementById('netSearchInput') as HTMLInputElement)?.value.toLowerCase() || '';
+    const searchFilter = (document.getElementById('netSearchInput') as HTMLInputElement)?.value.toLowerCase() || '';
 
     if (!tbody) return;
 
     const filtered = this.requests.filter(r => {
-      if (!filter) return true;
-      return r.url.toLowerCase().includes(filter) ||
-        r.status.toString().includes(filter) ||
-        r.method.toLowerCase().includes(filter);
+      // 1. Primary Category Filter
+      if (this.activeFilterCategory === 'api' && r.category !== 'api') return false;
+      if (this.activeFilterCategory === 'document' && r.category !== 'document') return false;
+      if (this.activeFilterCategory === 'asset' && r.category !== 'asset') return false;
+      if (this.activeFilterCategory === 'error') {
+        const isErr = (r.status >= 400 && r.status !== 304) || r.status === 0 || r.statusClassification === 'app-failure';
+        if (!isErr) return false;
+      }
+
+      // 2. Hide Cached filter
+      if (this.hideCached && r.isCached) return false;
+
+      // 3. Method filter
+      if (this.filterMethod && r.method.toUpperCase() !== this.filterMethod) return false;
+
+      // 4. Status range filter
+      if (this.filterStatus) {
+        if (this.filterStatus === '2xx' && (r.status < 200 || r.status >= 300)) return false;
+        if (this.filterStatus === '3xx' && (r.status < 300 || r.status >= 400)) return false;
+        if (this.filterStatus === '4xx' && (r.status < 400 || r.status >= 500)) return false;
+        if (this.filterStatus === '5xx' && r.status < 500) return false;
+      }
+
+      // 5. Search text filter
+      if (searchFilter) {
+        return r.url.toLowerCase().includes(searchFilter) ||
+          r.status.toString().includes(searchFilter) ||
+          r.method.toLowerCase().includes(searchFilter);
+      }
+
+      return true;
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="5">${this.requests.length === 0 ? 'Waiting for application traffic in inspected tab...' : 'No matching requests.'}</td></tr>`;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="5">${this.requests.length === 0 ? 'Waiting for application traffic in inspected tab...' : 'No matching requests for selected filter.'}</td></tr>`;
       return;
     }
 
@@ -396,16 +504,20 @@ export class PanelController {
       if (r.statusClassification === 'app-failure') badgeClass = 'badge-app-err';
       else if (r.status >= 500) badgeClass = 'badge-5xx';
       else if (r.status >= 400) badgeClass = 'badge-4xx';
+      else if (r.status === 304) badgeClass = 'badge-2xx'; // 304 is cache success
       else if (r.status >= 300) badgeClass = 'badge-3xx';
       else if (r.status === 0) badgeClass = 'badge-5xx';
 
-      const statusText = r.statusClassification === 'app-failure' ? `${r.status} APP` : (r.status === 0 ? 'FAIL' : String(r.status));
+      let statusDisplay = String(r.status);
+      if (r.statusClassification === 'app-failure') statusDisplay = `${r.status} APP`;
+      else if (r.status === 304) statusDisplay = '304 (Cache)';
+      else if (r.status === 0) statusDisplay = 'FAIL';
 
       tr.innerHTML = `
-        <td><span class="status-badge ${badgeClass}">${statusText}</span></td>
+        <td><span class="status-badge ${badgeClass}">${statusDisplay}</span></td>
         <td><span class="method-tag">${r.method}</span></td>
         <td title="${r.url}">${r.pathname || r.url}</td>
-        <td><span class="type-tag">${r.resourceType || 'Fetch'}</span></td>
+        <td><span class="type-tag">${r.resourceType}</span></td>
         <td class="time-tag">${r.duration} ms</td>
       `;
 
@@ -438,6 +550,7 @@ export class PanelController {
     const pill = document.getElementById('detailStatusPill')!;
     pill.textContent = `${selected.status} ${selected.statusText}`;
     pill.className = 'status-badge ' + (selected.status >= 200 && selected.status < 300 ? 'badge-2xx' : 'badge-4xx');
+    if (selected.status === 304) pill.className = 'status-badge badge-2xx';
     if (selected.status >= 500 || selected.status === 0) pill.className = 'status-badge badge-5xx';
     if (selected.statusClassification === 'app-failure') pill.className = 'status-badge badge-app-err';
 
@@ -454,6 +567,19 @@ export class PanelController {
       appMsg.textContent = selected.applicationErrorMessage || 'Business failure payload detected';
     } else {
       appAlert.classList.add('hidden');
+    }
+
+    // SSR / HTML Document Diagnostic Card
+    const ssrCard = document.getElementById('ssrDiagnosticCard')!;
+    const htmlSearchBar = document.getElementById('htmlSearchBar')!;
+    if (selected.htmlDiagnosis) {
+      ssrCard.classList.remove('hidden');
+      htmlSearchBar.classList.remove('hidden');
+      document.getElementById('ssrDiagTitle')!.textContent = selected.htmlDiagnosis.title;
+      document.getElementById('ssrDiagDesc')!.textContent = selected.htmlDiagnosis.description;
+    } else {
+      ssrCard.classList.add('hidden');
+      htmlSearchBar.classList.add('hidden');
     }
 
     // Headers
@@ -479,10 +605,10 @@ export class PanelController {
     const payloadBox = document.getElementById('detailPayloadBox')!;
     payloadBox.textContent = selected.requestPayload || 'No request payload sent with this request.';
 
-    // Response
+    // Response Content
     const jsonTree = document.getElementById('detailJsonViewer')!;
     const rawBox = document.getElementById('detailRawResponse')!;
-    rawBox.textContent = selected.responseBody || 'No response content.';
+    rawBox.textContent = selected.responseBody || 'No response content available.';
 
     if (selected.responseBody && selected.isJson) {
       try {
@@ -496,32 +622,60 @@ export class PanelController {
         rawBox.classList.remove('hidden');
       }
     } else {
+      // HTML or Text document
       jsonTree.classList.add('hidden');
       rawBox.classList.remove('hidden');
+      document.getElementById('btnTogglePrettyView')!.textContent = 'Pretty View';
     }
   }
 
-  private cloneSelectedRequestToWorkspace(): void {
+  private performHtmlSearch(query: string): void {
+    const rawBox = document.getElementById('detailRawResponse')!;
+    const matchCountEl = document.getElementById('htmlMatchCount')!;
+    const selected = this.requests.find(r => r.id === this.selectedRequestId);
+
+    if (!selected || !selected.responseBody) return;
+
+    if (!query || !query.trim()) {
+      rawBox.textContent = selected.responseBody;
+      matchCountEl.textContent = '0 matches';
+      return;
+    }
+
+    const text = selected.responseBody;
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+
+    let count = 0;
+    let pos = 0;
+    while ((pos = lowerText.indexOf(lowerQuery, pos)) !== -1) {
+      count++;
+      pos += lowerQuery.length;
+    }
+
+    matchCountEl.textContent = `${count} ${count === 1 ? 'match' : 'matches'}`;
+  }
+
+  // --- "Save to API Client" Modal Logic ---
+  private openSaveCapturedModal(): void {
     const selected = this.requests.find(r => r.id === this.selectedRequestId);
     if (!selected) return;
 
-    this.addNewWorkspaceTab({
-      name: `${selected.method} ${selected.pathname || '/request'}`,
-      method: selected.method as HttpMethod,
-      url: selected.url,
-      headers: selected.requestHeaders.map(h => ({
-        id: Math.random().toString(),
-        key: h.name,
-        value: h.value,
-        enabled: true
-      })),
-      body: {
-        type: selected.requestPayload ? 'json' : 'none',
-        raw: selected.requestPayload
-      }
+    const modal = document.getElementById('modalSaveRequest') as HTMLDialogElement;
+    modal.dataset.isFromCaptured = 'true';
+    const nameInput = document.getElementById('saveReqName') as HTMLInputElement;
+    const colSelect = document.getElementById('saveReqCollectionSelect') as HTMLSelectElement;
+
+    nameInput.value = `${selected.method} ${selected.pathname || '/api'}`;
+    colSelect.innerHTML = '<option value="">(No collection)</option>';
+    this.collections.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      colSelect.appendChild(opt);
     });
 
-    this.switchToScreen('workspace');
+    modal.showModal();
   }
 
   // --- API Client (Postman) Logic ---
@@ -721,6 +875,7 @@ export class PanelController {
 
       badge.textContent = `${response.status} ${response.statusText}`;
       badge.className = 'status-badge ' + (response.status >= 200 && response.status < 300 ? 'badge-2xx' : 'badge-4xx');
+      if (response.status === 304) badge.className = 'status-badge badge-2xx';
       if (response.status >= 500 || response.status === 0) badge.className = 'status-badge badge-5xx';
 
       document.getElementById('respDurationText')!.textContent = `${response.duration} ms`;
@@ -733,17 +888,23 @@ export class PanelController {
 
       rawBox.textContent = response.body || response.error || 'No content';
 
-      if (response.isJson && response.body) {
+      if (response.status === 0 || response.error) {
+        emptyState.innerHTML = `<div style="color: #fca5a5; padding: 12px; background: rgba(239,68,68,0.15); border: 1px solid #7f1d1d; border-radius: 6px;"><strong>Request Failed:</strong> ${response.error || 'Network error or CORS restriction'}</div>`;
+        emptyState.classList.remove('hidden');
+        jsonTree.classList.add('hidden');
+      } else if (response.isJson && response.body) {
         try {
           const parsed = JSON.parse(response.body);
           emptyState.classList.add('hidden');
           jsonTree.classList.remove('hidden');
           JsonViewer.render(parsed, jsonTree);
         } catch {
+          emptyState.innerHTML = 'Unable to parse response as JSON. Check Raw tab.';
           emptyState.classList.remove('hidden');
           jsonTree.classList.add('hidden');
         }
       } else {
+        emptyState.innerHTML = 'Response is not JSON. Switch to <strong>Raw</strong> tab to inspect content.';
         emptyState.classList.remove('hidden');
         jsonTree.classList.add('hidden');
       }
@@ -773,11 +934,75 @@ export class PanelController {
     }
   }
 
+  // --- Import Modal & Importers Execution ---
+  private openImportModal(): void {
+    const modal = document.getElementById('modalImport') as HTMLDialogElement;
+    const errorBanner = document.getElementById('importErrorBanner')!;
+    const textarea = document.getElementById('importTextarea') as HTMLTextAreaElement;
+    errorBanner.classList.add('hidden');
+    textarea.value = '';
+    modal.showModal();
+  }
+
+  private async executeImport(): Promise<void> {
+    const textarea = document.getElementById('importTextarea') as HTMLTextAreaElement;
+    const errorBanner = document.getElementById('importErrorBanner')!;
+    const modal = document.getElementById('modalImport') as HTMLDialogElement;
+    const content = textarea.value.trim();
+
+    if (!content) {
+      errorBanner.textContent = 'Please paste content or select a file to import.';
+      errorBanner.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      errorBanner.classList.add('hidden');
+
+      if (this.activeImportTab === 'impPostman') {
+        const { collection, requests } = PostmanImporter.parse(content);
+        await storage.saveCollection(collection);
+        this.collections.push(collection);
+        for (const req of requests) {
+          await storage.saveRequest(req);
+          this.savedRequests.push(req);
+        }
+        this.renderCollectionsSidebar();
+        if (requests.length > 0) this.addNewWorkspaceTab(requests[0]);
+      } else if (this.activeImportTab === 'impOpenApi') {
+        const { collection, requests } = OpenApiImporter.parse(content);
+        await storage.saveCollection(collection);
+        this.collections.push(collection);
+        for (const req of requests) {
+          await storage.saveRequest(req);
+          this.savedRequests.push(req);
+        }
+        this.renderCollectionsSidebar();
+        if (requests.length > 0) this.addNewWorkspaceTab(requests[0]);
+      } else if (this.activeImportTab === 'impCurl') {
+        const parsed = CurlImporter.parse(content);
+        this.addNewWorkspaceTab(parsed);
+      } else if (this.activeImportTab === 'impEnv') {
+        const env = EnvironmentImporter.parse(content);
+        await storage.saveEnvironment(env);
+        this.environments.push(env);
+        this.activeEnv = env;
+        this.renderEnvironmentsDropdown();
+        this.renderEnvironmentsSidebar();
+      }
+
+      modal.close();
+    } catch (err: unknown) {
+      errorBanner.textContent = err instanceof Error ? err.message : String(err);
+      errorBanner.classList.remove('hidden');
+    }
+  }
+
   // --- Collections, History, Environments Rendering ---
   private renderCollectionsSidebar(): void {
     const list = document.getElementById('collectionsItemsList')!;
     if (this.collections.length === 0) {
-      list.innerHTML = '<div class="empty-state">No collections yet.</div>';
+      list.innerHTML = '<div class="empty-state">No collections yet. Click Import or + New Collection.</div>';
       return;
     }
     list.innerHTML = '';
@@ -797,7 +1022,32 @@ export class PanelController {
           });
         }
       });
+
+      // Click collection header to load requests
+      item.onclick = () => {
+        const reqs = this.savedRequests.filter(r => r.collectionId === col.id);
+        if (reqs.length > 0) {
+          this.addNewWorkspaceTab(reqs[0]);
+        }
+      };
+
       list.appendChild(item);
+
+      // Render children requests under this collection
+      const childReqs = this.savedRequests.filter(r => r.collectionId === col.id);
+      childReqs.forEach(cr => {
+        const childItem = document.createElement('div');
+        childItem.className = 'sidebar-item';
+        childItem.style.paddingLeft = '20px';
+        childItem.innerHTML = `
+          <div class="item-title-row">
+            <span class="method-tag">${cr.method}</span>
+            <span>${cr.name}</span>
+          </div>
+        `;
+        childItem.onclick = () => this.addNewWorkspaceTab(cr);
+        list.appendChild(childItem);
+      });
     });
   }
 
@@ -873,6 +1123,7 @@ export class PanelController {
     if (!tab) return;
 
     const modal = document.getElementById('modalSaveRequest') as HTMLDialogElement;
+    delete modal.dataset.isFromCaptured;
     const nameInput = document.getElementById('saveReqName') as HTMLInputElement;
     const colSelect = document.getElementById('saveReqCollectionSelect') as HTMLSelectElement;
 
@@ -890,21 +1141,92 @@ export class PanelController {
   }
 
   private async confirmSave(): Promise<void> {
-    const tab = this.getActiveTab();
-    if (!tab) return;
-
     const modal = document.getElementById('modalSaveRequest') as HTMLDialogElement;
     const name = (document.getElementById('saveReqName') as HTMLInputElement).value.trim();
     const colId = (document.getElementById('saveReqCollectionSelect') as HTMLSelectElement).value;
+    const redactOnSave = (document.getElementById('chkRedactSensitiveOnSave') as HTMLInputElement).checked;
+
+    const selectedCaptured = this.requests.find(r => r.id === this.selectedRequestId);
+
+    if (modal.dataset.isFromCaptured === 'true' && selectedCaptured) {
+      // Saving captured request from Monitor into API Client collection
+      delete modal.dataset.isFromCaptured;
+
+      let headers: KeyValuePair[] = selectedCaptured.requestHeaders.map(h => ({
+        id: Math.random().toString(),
+        key: h.name,
+        value: h.value,
+        enabled: true
+      }));
+
+      if (redactOnSave) {
+        headers = Redactor.redactKeyValuePairs(headers);
+      }
+
+      const newReq: RequestItem = {
+        id: `req_${Date.now()}`,
+        collectionId: colId || undefined,
+        name: name || `${selectedCaptured.method} ${selectedCaptured.pathname}`,
+        method: selectedCaptured.method as HttpMethod,
+        url: selectedCaptured.url,
+        headers,
+        params: [],
+        auth: { type: 'none' },
+        body: {
+          type: selectedCaptured.requestPayload ? 'json' : 'none',
+          raw: selectedCaptured.requestPayload
+        },
+        executionMode: 'inspected-page',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+
+      await storage.saveRequest(newReq);
+      this.savedRequests.push(newReq);
+      this.addNewWorkspaceTab(newReq);
+      this.renderCollectionsSidebar();
+      modal.close();
+      this.switchToScreen('workspace');
+      return;
+    }
+
+    // Normal save from API Client tab
+    const tab = this.getActiveTab();
+    if (!tab) return;
 
     tab.name = name || 'Untitled Request';
     tab.collectionId = colId || undefined;
     tab.updatedAt = Date.now();
 
     await storage.saveRequest(tab);
+    const idx = this.savedRequests.findIndex(r => r.id === tab.id);
+    if (idx >= 0) this.savedRequests[idx] = tab;
+    else this.savedRequests.push(tab);
+
     this.renderWorkspaceTabs();
     this.renderCollectionsSidebar();
     modal.close();
+  }
+
+  private openSaveCapturedModalFromMonitor(): void {
+    const selected = this.requests.find(r => r.id === this.selectedRequestId);
+    if (!selected) return;
+
+    const modal = document.getElementById('modalSaveRequest') as HTMLDialogElement;
+    modal.dataset.isFromCaptured = 'true';
+    const nameInput = document.getElementById('saveReqName') as HTMLInputElement;
+    const colSelect = document.getElementById('saveReqCollectionSelect') as HTMLSelectElement;
+
+    nameInput.value = `${selected.method} ${selected.pathname || '/api'}`;
+    colSelect.innerHTML = '<option value="">(No collection)</option>';
+    this.collections.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      colSelect.appendChild(opt);
+    });
+
+    modal.showModal();
   }
 
   private openEnvModal(env?: Environment): void {

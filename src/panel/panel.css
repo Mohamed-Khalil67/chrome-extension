@@ -44,6 +44,10 @@ body {
   overflow: hidden;
 }
 
+.hidden {
+  display: none !important;
+}
+
 /* --- Top Header --- */
 .app-header {
   height: 48px;

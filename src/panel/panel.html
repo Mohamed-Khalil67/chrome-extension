@@ -66,6 +66,51 @@
       </div>
     </div>
 
+    <!-- Filter Toolbar with the 5 Explicit Filters -->
+    <div class="filter-toolbar">
+      <div class="filter-buttons-group">
+        <button class="filter-pill active" data-cat="api">API</button>
+        <button class="filter-pill" data-cat="document">Documents</button>
+        <button class="filter-pill" data-cat="asset">Assets</button>
+        <button class="filter-pill" data-cat="all">All</button>
+        <button class="filter-pill" data-cat="error">Errors</button>
+      </div>
+
+      <input type="text" id="netSearchInput" class="clean-search" placeholder="Filter by URL, method, status...">
+
+      <!-- More Filters Popover Toggle -->
+      <div class="more-filters-wrapper">
+        <button class="btn-micro" id="btnToggleMoreFilters">More filters ▾</button>
+        <div class="more-filters-menu hidden" id="moreFiltersMenu">
+          <div class="filter-row">
+            <label>Method:</label>
+            <select id="filterMethodSelect" class="clean-select">
+              <option value="">All Methods</option>
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label>Status:</label>
+            <select id="filterStatusSelect" class="clean-select">
+              <option value="">All Statuses</option>
+              <option value="2xx">2xx Success</option>
+              <option value="3xx">3xx (incl. 304)</option>
+              <option value="4xx">4xx Client Error</option>
+              <option value="5xx">5xx Server Error</option>
+            </select>
+          </div>
+          <div class="filter-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="chkHideCached"> Hide cached resources
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Errors Banner (Shown only when JS/runtime errors occur) -->
     <div class="errors-drawer hidden" id="errorsDrawer">
       <div class="errors-header">
@@ -79,9 +124,6 @@
     <div class="monitor-body">
       <!-- Left Pane: Captured Requests Table -->
       <section class="pane-table">
-        <div class="table-toolbar">
-          <input type="text" id="netSearchInput" class="clean-search" placeholder="Filter requests by URL, method, status...">
-        </div>
         <div class="table-wrapper">
           <table class="requests-table">
             <thead>
@@ -89,7 +131,7 @@
                 <th style="width: 80px;">Status</th>
                 <th style="width: 65px;">Method</th>
                 <th>Request URL</th>
-                <th style="width: 60px;">Type</th>
+                <th style="width: 70px;">Type</th>
                 <th style="width: 75px; text-align: right;">Time</th>
               </tr>
             </thead>
@@ -117,8 +159,8 @@
               <span class="detail-url" id="detailUrlPath" title="">/api/products</span>
             </div>
             <div class="detail-header-right">
-              <button class="btn-secondary" id="btnCloneToWorkspace" title="Open this request in the API Client">
-                🚀 Open in API Client
+              <button class="btn-secondary" id="btnSaveToApiClient" title="Save this request to an API Client collection">
+                💾 Save to API Client
               </button>
             </div>
           </div>
@@ -129,15 +171,41 @@
             <span id="detailAppErrorMessage"></span>
           </div>
 
-          <!-- Detail Tabs (Headers | Payload | Response) -->
+          <!-- SSR / HTML Document Diagnosis Banner -->
+          <div class="ssr-diagnostic-card hidden" id="ssrDiagnosticCard">
+            <div class="ssr-badge" id="ssrDiagBadge">SSR Diagnostic</div>
+            <div class="ssr-info">
+              <strong id="ssrDiagTitle">Initial HTML contains rendered content</strong>
+              <p id="ssrDiagDesc">The server delivered pre-rendered HTML content.</p>
+              <span class="ssr-disclaimer">Observation based on initial HTML structure, not a confirmed server strategy.</span>
+            </div>
+          </div>
+
+          <!-- Detail Tabs (Headers | Payload | Response / HTML) -->
           <div class="detail-tabs-bar">
-            <button class="tab-btn active" data-tab="tabDetailHeaders">Headers</button>
+            <button class="tab-btn active" data-tab="tabDetailResponse" id="tabBtnResponse">Response</button>
+            <button class="tab-btn" data-tab="tabDetailHeaders">Headers</button>
             <button class="tab-btn" data-tab="tabDetailPayload">Payload</button>
-            <button class="tab-btn" data-tab="tabDetailResponse">Response</button>
+          </div>
+
+          <!-- Response View (JSON or HTML) -->
+          <div class="detail-tab-content active" id="tabDetailResponse">
+            <!-- HTML Search Bar (Visible for documents) -->
+            <div class="html-search-bar hidden" id="htmlSearchBar">
+              <input type="text" id="inputHtmlSearch" class="clean-search" placeholder="Search inside HTML response...">
+              <span class="html-match-count" id="htmlMatchCount">0 matches</span>
+            </div>
+
+            <div class="response-actions">
+              <button class="btn-micro" id="btnTogglePrettyView">Raw Text</button>
+              <button class="btn-micro" id="btnCopyResponse">Copy</button>
+            </div>
+            <div id="detailJsonViewer" class="json-tree-wrapper"></div>
+            <pre class="raw-box hidden" id="detailRawResponse"></pre>
           </div>
 
           <!-- Headers View -->
-          <div class="detail-tab-content active" id="tabDetailHeaders">
+          <div class="detail-tab-content" id="tabDetailHeaders">
             <div class="section-group">
               <h3 class="group-title">Response Headers</h3>
               <div class="headers-block" id="detailResponseHeaders">-</div>
@@ -152,16 +220,6 @@
           <div class="detail-tab-content" id="tabDetailPayload">
             <pre class="raw-box" id="detailPayloadBox">No request payload.</pre>
           </div>
-
-          <!-- Response View -->
-          <div class="detail-tab-content" id="tabDetailResponse">
-            <div class="response-actions">
-              <button class="btn-micro" id="btnTogglePrettyView">Raw Text</button>
-              <button class="btn-micro" id="btnCopyResponse">Copy</button>
-            </div>
-            <div id="detailJsonViewer" class="json-tree-wrapper"></div>
-            <pre class="raw-box hidden" id="detailRawResponse"></pre>
-          </div>
         </div>
       </section>
     </div>
@@ -174,29 +232,33 @@
     <div class="client-layout">
       <!-- Sidebar: Collections, History, Environments -->
       <aside class="client-sidebar">
+        <div class="sidebar-top-actions">
+          <button class="btn-import" id="btnOpenImportModal">📥 Import</button>
+        </div>
+
         <div class="sidebar-nav">
-          <button class="s-nav-btn active" data-section="secHistory">History</button>
-          <button class="s-nav-btn" data-section="secCollections">Collections</button>
+          <button class="s-nav-btn active" data-section="secCollections">Collections</button>
+          <button class="s-nav-btn" data-section="secHistory">History</button>
           <button class="s-nav-btn" data-section="secEnvironments">Environments</button>
         </div>
 
+        <!-- Collections -->
+        <div class="sidebar-panel active" id="secCollections">
+          <div class="sidebar-panel-header">
+            <button class="btn-micro" id="btnCreateCollection">+ New Collection</button>
+          </div>
+          <div class="items-list" id="collectionsItemsList">
+            <div class="empty-state">No collections yet. Click Import or + New Collection.</div>
+          </div>
+        </div>
+
         <!-- History -->
-        <div class="sidebar-panel active" id="secHistory">
+        <div class="sidebar-panel" id="secHistory">
           <div class="sidebar-panel-header">
             <button class="btn-micro" id="btnClearHistory">Clear All</button>
           </div>
           <div class="items-list" id="historyItemsList">
             <div class="empty-state">No request history yet.</div>
-          </div>
-        </div>
-
-        <!-- Collections -->
-        <div class="sidebar-panel" id="secCollections">
-          <div class="sidebar-panel-header">
-            <button class="btn-micro" id="btnCreateCollection">+ New Collection</button>
-          </div>
-          <div class="items-list" id="collectionsItemsList">
-            <div class="empty-state">No collections saved.</div>
           </div>
         </div>
 
@@ -227,6 +289,8 @@
             <option value="PUT">PUT</option>
             <option value="PATCH">PATCH</option>
             <option value="DELETE">DELETE</option>
+            <option value="HEAD">HEAD</option>
+            <option value="OPTIONS">OPTIONS</option>
           </select>
           <input type="text" id="reqUrlInput" class="url-field" placeholder="Enter request URL (e.g. {{baseUrl}}/api/users)">
           
@@ -324,8 +388,42 @@
     </div>
   </main>
 
-  <!-- Modals -->
-  <!-- Save Request Dialog -->
+  <!-- ============================================== -->
+  <!-- MODALS                                         -->
+  <!-- ============================================== -->
+  <!-- 1. Universal Import Dialog -->
+  <dialog class="clean-modal" id="modalImport">
+    <div class="modal-box import-modal-box">
+      <h2 class="modal-title">Import to API Client</h2>
+      
+      <div class="import-tabs-bar">
+        <button class="imp-tab active" data-imptab="impPostman">Postman Collection</button>
+        <button class="imp-tab" data-imptab="impOpenApi">OpenAPI / Swagger</button>
+        <button class="imp-tab" data-imptab="impCurl">cURL</button>
+        <button class="imp-tab" data-imptab="impEnv">Environment</button>
+      </div>
+
+      <div class="import-body">
+        <div class="file-picker-row">
+          <label class="btn-ghost file-upload-label">
+            📁 Choose File (.json, .yaml)
+            <input type="file" id="importFileInput" accept=".json,.yaml,.yml,.txt" style="display: none;">
+          </label>
+          <span class="hint-text" id="importFileHint">or paste content below:</span>
+        </div>
+
+        <textarea id="importTextarea" class="code-editor import-textarea" placeholder="Paste Postman JSON, OpenAPI YAML/JSON, or cURL command here..."></textarea>
+        <div class="import-error-banner hidden" id="importErrorBanner"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-ghost" id="btnCancelImport">Cancel</button>
+        <button class="btn-send" id="btnConfirmImport">Import</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- 2. Save Request to Collection Dialog -->
   <dialog class="clean-modal" id="modalSaveRequest">
     <div class="modal-box">
       <h2 class="modal-title">Save to Collection</h2>
@@ -337,14 +435,19 @@
         <label>Collection:</label>
         <select id="saveReqCollectionSelect" class="clean-select"></select>
       </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="chkRedactSensitiveOnSave" checked> Redact sensitive headers (Authorization, Cookie)
+        </label>
+      </div>
       <div class="modal-actions">
         <button class="btn-ghost" id="btnCancelSave">Cancel</button>
-        <button class="btn-send" id="btnConfirmSave">Save</button>
+        <button class="btn-send" id="btnConfirmSave">Save Request</button>
       </div>
     </div>
   </dialog>
 
-  <!-- Environment Dialog -->
+  <!-- 3. Environment Dialog -->
   <dialog class="clean-modal" id="modalEnvironment">
     <div class="modal-box">
       <h2 class="modal-title" id="envModalTitle">Configure Environment</h2>
