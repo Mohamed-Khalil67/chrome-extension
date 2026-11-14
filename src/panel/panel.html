@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Frontend Lens</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <!-- Top Navigation & Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-logo">🔍</div>
+      <div class="brand-title">Frontend Lens</div>
+      <div class="session-badge" id="tabSessionBadge">Tab: --</div>
+    </div>
+
+    <!-- Main Mode Switcher -->
+    <div class="mode-switcher">
+      <button class="mode-btn active" id="btnModeDebugger">
+        <span class="icon">⚡</span> Frontend Debugger
+      </button>
+      <button class="mode-btn" id="btnModeWorkspace">
+        <span class="icon">🚀</span> API Client Workspace
+      </button>
+    </div>
+
+    <div class="header-actions">
+      <div class="env-selector-container">
+        <span class="env-label">Env:</span>
+        <select id="activeEnvSelect" class="env-dropdown">
+          <option value="">No Environment</option>
+        </select>
+      </div>
+      <button class="btn-action" id="btnClearSession" title="Clear recorded data">Clear</button>
+    </div>
+  </header>
+
+  <!-- ============================================== -->
+  <!-- 1. FRONTEND DEBUGGER VIEW                       -->
+  <!-- ============================================== -->
+  <main class="view-container" id="viewDebugger">
+    <!-- Sub-navigation -->
+    <nav class="sub-nav">
+      <button class="sub-nav-btn active" data-target="debuggerNetwork">Network Inspector</button>
+      <button class="sub-nav-btn" data-target="debuggerUI">UI & Layout Inspector</button>
+      <div class="sub-nav-filter" id="netFilterContainer">
+        <input type="text" id="netFilterInput" placeholder="Filter URL or status..." class="filter-input">
+        <span class="request-count-badge" id="netRequestCount">0 requests</span>
+      </div>
+    </nav>
+
+    <!-- Network Inspector View -->
+    <section class="sub-view-section active" id="debuggerNetwork">
+      <div class="split-pane">
+        <!-- Request List Table -->
+        <div class="pane-left">
+          <table class="data-table" id="netTable">
+            <thead>
+              <tr>
+                <th style="width: 75px;">Status</th>
+                <th style="width: 70px;">Method</th>
+                <th>URL Path</th>
+                <th style="width: 75px;">Time</th>
+                <th style="width: 75px;">Size</th>
+              </tr>
+            </thead>
+            <tbody id="netTableBody">
+              <tr class="empty-row">
+                <td colspan="5">Waiting for network requests in inspected tab...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Request Details Pane -->
+        <div class="pane-right" id="netDetailPane">
+          <div class="detail-empty" id="netDetailEmpty">Select a request on the left to inspect headers, payload, and response.</div>
+          <div class="detail-content hidden" id="netDetailContent">
+            <div class="detail-subtabs">
+              <button class="detail-tab active" data-subtab="netSubOverview">Overview</button>
+              <button class="detail-tab" data-subtab="netSubHeaders">Headers</button>
+              <button class="detail-tab" data-subtab="netSubPayload">Payload</button>
+              <button class="detail-tab" data-subtab="netSubResponse">Response Body</button>
+            </div>
+
+            <!-- Overview -->
+            <div class="detail-section active" id="netSubOverview">
+              <div class="overview-grid">
+                <div class="overview-row"><span class="k">Request URL:</span><span class="v" id="detailUrl">-</span></div>
+                <div class="overview-row"><span class="k">Status Code:</span><span class="v" id="detailStatus">-</span></div>
+                <div class="overview-row"><span class="k">Method:</span><span class="v" id="detailMethod">-</span></div>
+                <div class="overview-row"><span class="k">Latency:</span><span class="v" id="detailLatency">-</span></div>
+                <div class="overview-row"><span class="k">Payload Size:</span><span class="v" id="detailSize">-</span></div>
+                <div class="overview-row"><span class="k">MIME Type:</span><span class="v" id="detailMime">-</span></div>
+                <div class="overview-row" id="appErrorRow" style="display:none;">
+                  <span class="k">Application Result:</span>
+                  <span class="v app-error-banner" id="detailAppError">-</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Headers -->
+            <div class="detail-section" id="netSubHeaders">
+              <div class="headers-block">
+                <div class="headers-heading">Response Headers</div>
+                <div class="headers-list" id="detailResHeaders">-</div>
+              </div>
+              <div class="headers-block">
+                <div class="headers-heading">Request Headers</div>
+                <div class="headers-list" id="detailReqHeaders">-</div>
+              </div>
+            </div>
+
+            <!-- Payload -->
+            <div class="detail-section" id="netSubPayload">
+              <pre class="code-preview" id="detailPayloadText">No payload sent with this request.</pre>
+            </div>
+
+            <!-- Response -->
+            <div class="detail-section" id="netSubResponse">
+              <div class="response-toolbar">
+                <button class="btn-micro" id="btnTogglePrettyJson">Pretty Tree</button>
+                <button class="btn-micro" id="btnCopyResponseBody">Copy</button>
+              </div>
+              <div id="detailResponseFormatted" class="response-formatted-container"></div>
+              <pre id="detailResponseRaw" class="code-preview hidden"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- UI Inspector View -->
+    <section class="sub-view-section" id="debuggerUI">
+      <div class="ui-inspector-header">
+        <button class="btn-primary" id="btnInspectSelectedElement">🔍 Inspect Selected DOM Element ($0)</button>
+        <span class="hint-text">Select an element in Chrome DevTools' Elements tab, then click Inspect.</span>
+      </div>
+
+      <div class="ui-inspector-layout">
+        <!-- Diagnostic Summary -->
+        <div class="ui-col ui-col-info">
+          <div class="card">
+            <div class="card-title">Element Identification</div>
+            <div class="element-selector-pill" id="uiSelectorPill">&lt;select an element&gt;</div>
+            <div class="properties-list" id="uiAttributesList">
+              <div class="empty-state">No element inspected yet.</div>
+            </div>
+          </div>
+
+          <!-- Warnings and Diagnostics -->
+          <div class="card">
+            <div class="card-title">Diagnostics & Layout Warnings</div>
+            <div id="uiWarningsContainer">
+              <div class="alert-info">No warnings detected for the inspected element.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Box Model Visualizer -->
+        <div class="ui-col ui-col-diagram">
+          <div class="card">
+            <div class="card-title">Box Model & Dimensions</div>
+            <div id="uiBoxModelContainer"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Key Computed Styles</div>
+            <div class="computed-styles-grid" id="uiComputedStylesGrid">
+              <div class="style-row"><span class="k">Display:</span><span class="v" id="styleDisplay">-</span></div>
+              <div class="style-row"><span class="k">Position:</span><span class="v" id="stylePosition">-</span></div>
+              <div class="style-row"><span class="k">Overflow:</span><span class="v" id="styleOverflow">-</span></div>
+              <div class="style-row"><span class="k">Box-Sizing:</span><span class="v" id="styleBoxSizing">-</span></div>
+              <div class="style-row"><span class="k">Z-Index:</span><span class="v" id="styleZIndex">-</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================================== -->
+  <!-- 2. API CLIENT WORKSPACE VIEW (Postman-like)    -->
+  <!-- ============================================== -->
+  <main class="view-container hidden" id="viewWorkspace">
+    <div class="workspace-layout">
+      <!-- Left Sidebar: Collections & History -->
+      <aside class="workspace-sidebar">
+        <div class="sidebar-tabs">
+          <button class="sidebar-tab active" data-sidetab="sideCollections">Collections</button>
+          <button class="sidebar-tab" data-sidetab="sideHistory">History</button>
+          <button class="sidebar-tab" data-sidetab="sideEnvironments">Environments</button>
+        </div>
+
+        <!-- Collections Tab -->
+        <div class="sidebar-content active" id="sideCollections">
+          <div class="sidebar-action-bar">
+            <button class="btn-micro" id="btnCreateCollection">+ New Collection</button>
+          </div>
+          <div class="collections-tree" id="collectionsTree">
+            <div class="empty-state">No collections yet. Save requests to organize them.</div>
+          </div>
+        </div>
+
+        <!-- History Tab -->
+        <div class="sidebar-content" id="sideHistory">
+          <div class="sidebar-action-bar">
+            <button class="btn-micro" id="btnClearHistory">Clear All</button>
+          </div>
+          <div class="history-list" id="historyList">
+            <div class="empty-state">No request history yet.</div>
+          </div>
+        </div>
+
+        <!-- Environments Tab -->
+        <div class="sidebar-content" id="sideEnvironments">
+          <div class="sidebar-action-bar">
+            <button class="btn-micro" id="btnCreateEnv">+ New Environment</button>
+          </div>
+          <div class="environments-list" id="environmentsList">
+            <div class="empty-state">No environments configured.</div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Request Editor & Runner -->
+      <section class="workspace-main">
+        <!-- Open Request Tabs Bar -->
+        <div class="request-tabs-bar" id="requestTabsBar">
+          <!-- Request tab pills dynamically injected here -->
+          <button class="new-tab-btn" id="btnNewRequestTab" title="New Request Tab">+</button>
+        </div>
+
+        <!-- Request Address Bar -->
+        <div class="address-bar">
+          <select id="reqMethodSelect" class="method-dropdown">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+            <option value="HEAD">HEAD</option>
+            <option value="OPTIONS">OPTIONS</option>
+          </select>
+          <input type="text" id="reqUrlInput" class="url-input" placeholder="Enter request URL (e.g. https://api.example.com/users or {{baseUrl}}/items)">
+          
+          <div class="exec-mode-wrapper" title="Choose whether to send using Inspected Page cookies/context or Extension context">
+            <select id="reqExecModeSelect" class="exec-dropdown">
+              <option value="inspected-page">🌐 Inspected Page</option>
+              <option value="extension-context">⚡ Extension Context</option>
+            </select>
+          </div>
+
+          <button class="btn-send" id="btnSendRequest">Send</button>
+          <button class="btn-save" id="btnSaveRequest" title="Save to collection">Save</button>
+        </div>
+
+        <!-- Request Configuration Area -->
+        <div class="request-config-panel">
+          <div class="config-tabs">
+            <button class="config-tab active" data-cfg="cfgParams">Params</button>
+            <button class="config-tab" data-cfg="cfgHeaders">Headers</button>
+            <button class="config-tab" data-cfg="cfgAuth">Authorization</button>
+            <button class="config-tab" data-cfg="cfgBody">Body</button>
+          </div>
+
+          <!-- Query Params -->
+          <div class="config-section active" id="cfgParams">
+            <div class="kv-table" id="paramsKvTable">
+              <div class="kv-header"><span>Key</span><span>Value</span><span></span></div>
+              <div class="kv-rows" id="paramsKvRows"></div>
+              <button class="btn-micro" id="btnAddParamRow">+ Add Parameter</button>
+            </div>
+          </div>
+
+          <!-- Headers -->
+          <div class="config-section" id="cfgHeaders">
+            <div class="kv-table" id="headersKvTable">
+              <div class="kv-header"><span>Key</span><span>Value</span><span></span></div>
+              <div class="kv-rows" id="headersKvRows"></div>
+              <button class="btn-micro" id="btnAddHeaderRow">+ Add Header</button>
+            </div>
+          </div>
+
+          <!-- Authorization -->
+          <div class="config-section" id="cfgAuth">
+            <div class="auth-config-row">
+              <label>Type:</label>
+              <select id="authTypeSelect" class="form-dropdown">
+                <option value="none">No Auth</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="basic">Basic Auth</option>
+                <option value="apiKey">API Key</option>
+              </select>
+            </div>
+            <div class="auth-details" id="authDetailsContainer">
+              <!-- Dynamically populated auth fields -->
+            </div>
+          </div>
+
+          <!-- Body -->
+          <div class="config-section" id="cfgBody">
+            <div class="body-type-bar">
+              <label><input type="radio" name="bodyType" value="none" checked> none</label>
+              <label><input type="radio" name="bodyType" value="json"> JSON</label>
+              <label><input type="radio" name="bodyType" value="raw"> raw</label>
+              <button class="btn-micro" id="btnFormatJsonBody" style="margin-left: auto;">Format JSON</button>
+            </div>
+            <textarea id="reqBodyTextarea" class="body-textarea" placeholder="Request body payload (JSON / text)"></textarea>
+          </div>
+        </div>
+
+        <!-- Response Area -->
+        <div class="response-panel">
+          <div class="response-header">
+            <div class="response-metrics">
+              <span class="metric-pill status-neutral" id="respStatusPill">Status: --</span>
+              <span class="metric-item">Time: <strong id="respDurationText">-- ms</strong></span>
+              <span class="metric-item">Size: <strong id="respSizeText">-- B</strong></span>
+            </div>
+            <div class="response-subtabs">
+              <button class="resp-tab active" data-resptab="respPretty">Pretty JSON</button>
+              <button class="resp-tab" data-resptab="respRaw">Raw</button>
+              <button class="resp-tab" data-resptab="respHeaders">Headers</button>
+            </div>
+          </div>
+
+          <div class="response-body-wrapper">
+            <div class="resp-content active" id="respPretty">
+              <div class="empty-state" id="respPrettyEmpty">Hit Send to dispatch the request.</div>
+              <div id="respPrettyTree" class="json-viewer-container"></div>
+            </div>
+            <div class="resp-content" id="respRaw">
+              <pre class="code-preview" id="respRawText">No response data yet.</pre>
+            </div>
+            <div class="resp-content" id="respHeaders">
+              <div class="headers-list" id="respHeadersList">No response headers yet.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Environment Modal -->
+  <dialog class="modal-dialog" id="envModal">
+    <div class="modal-header">
+      <div class="modal-title" id="envModalTitle">Manage Environment</div>
+      <button class="btn-close-modal" id="btnCloseEnvModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label>Environment Name:</label>
+      <input type="text" id="envNameInput" class="form-input" placeholder="e.g. Local Development">
+      <div class="kv-table" style="margin-top: 12px;">
+        <div class="kv-header"><span>Variable Name</span><span>Initial Value</span><span></span></div>
+        <div class="kv-rows" id="envVarRows"></div>
+        <button class="btn-micro" id="btnAddEnvVarRow">+ Add Variable</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-action" id="btnCancelEnvModal">Cancel</button>
+      <button class="btn-primary" id="btnSaveEnvModal">Save Environment</button>
+    </div>
+  </dialog>
+
+  <!-- Save Request Modal -->
+  <dialog class="modal-dialog" id="saveReqModal">
+    <div class="modal-header">
+      <div class="modal-title">Save Request to Collection</div>
+      <button class="btn-close-modal" id="btnCloseSaveModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label>Request Name:</label>
+      <input type="text" id="saveReqNameInput" class="form-input" placeholder="e.g. Get User Profile">
+      <label style="margin-top: 8px;">Collection:</label>
+      <select id="saveReqCollectionSelect" class="form-dropdown"></select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-action" id="btnCancelSaveModal">Cancel</button>
+      <button class="btn-primary" id="btnConfirmSaveReq">Save</button>
+    </div>
+  </dialog>
+
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "frontend-lens",
+  "version": "0.1.0",
+  "description": "Frontend Debugger and Postman-like API Client for Chrome DevTools",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild tests/*.test.ts --bundle --platform=node --outdir=dist/tests --format=esm && node --test dist/tests/*.test.js"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.308",
+    "@types/node": "^22.13.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3"
+  }
+}
