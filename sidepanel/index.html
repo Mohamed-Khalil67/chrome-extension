@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>FE Lens</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="../icons/icon-32.png" width="20" height="20" alt="">
+      <span>FE Lens</span>
+    </div>
+    <div class="fw" id="fw" aria-live="polite"></div>
+    <button type="button" class="btn primary" id="pick" aria-pressed="false" title="Pick an element (Alt+Shift+X)">
+      <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 1v4M10 15v4M1 10h4M15 10h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Pick</span>
+    </button>
+    <button type="button" class="btn icon" id="settings-btn" popovertarget="settings" aria-label="Settings">
+      <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16"><path fill="currentColor" d="M8.6 1h2.8l.4 2.3 1.5.8 2.2-.9 1.4 2.4-1.8 1.5v1.8l1.8 1.5-1.4 2.4-2.2-.9-1.5.8-.4 2.3H8.6l-.4-2.3-1.5-.8-2.2.9-1.4-2.4 1.8-1.5V8.1L3.1 6.6l1.4-2.4 2.2.9 1.5-.8L8.6 1ZM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+    </button>
+  </header>
+
+  <div id="settings" popover class="settings">
+    <form id="settings-form">
+      <h2>Settings</h2>
+      <label for="root">Project folder</label>
+      <input id="root" name="root" type="text" spellcheck="false" autocomplete="off" placeholder="C:\work\my-app">
+      <p class="help">Used to open files in your editor. The folder that contains <code>src/</code>.</p>
+      <label for="editor">Editor</label>
+      <select id="editor" name="editor">
+        <option value="vscode">VS Code</option>
+        <option value="cursor">Cursor</option>
+        <option value="webstorm">WebStorm</option>
+      </select>
+      <div class="row">
+        <button type="submit" class="btn primary">Save</button>
+        <span class="saved" id="saved" role="status"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="tabs">
+    <div class="tablist" focusgroup="tablist nomemory" aria-label="FE Lens views">
+      <button type="button" role="tab" id="tab-inspect" aria-selected="true" focusgroupstart>Inspect</button>
+      <button type="button" role="tab" id="tab-network">Network <span class="count" id="net-count"></span></button>
+      <button type="button" role="tab" id="tab-errors">Errors <span class="count bad" id="err-count"></span></button>
+    </div>
+
+    <main class="panels">
+      <section role="tabpanel" id="panel-inspect" aria-labelledby="tab-inspect">
+        <div class="wrap" id="inspect"></div>
+      </section>
+
+      <section role="tabpanel" id="panel-network" aria-labelledby="tab-network" hidden>
+        <div class="wrap">
+          <div class="toolbar">
+            <input type="search" id="net-q" placeholder="Filter by URL or method" aria-label="Filter requests">
+            <label class="toggle"><input type="checkbox" id="net-failed"> Failed only</label>
+            <button type="button" class="btn ghost" id="net-clear">Clear</button>
+          </div>
+          <div class="net-head" aria-hidden="true"><span>Method</span><span>Request</span><span>Status</span><span>Time</span></div>
+          <div id="net-list" class="list"></div>
+          <p class="empty" id="net-empty">No requests yet. Use the app and its HTTP calls show up here.</p>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-errors" aria-labelledby="tab-errors" hidden>
+        <div class="wrap">
+          <div class="toolbar">
+            <label class="toggle"><input type="checkbox" id="err-warn"> Show warnings</label>
+            <button type="button" class="btn ghost" id="err-clear">Clear</button>
+          </div>
+          <div id="err-list" class="list"></div>
+          <p class="empty" id="err-empty">No errors. Runtime errors, failed requests and Angular NG codes appear here.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="offline" class="offline" hidden></div>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
