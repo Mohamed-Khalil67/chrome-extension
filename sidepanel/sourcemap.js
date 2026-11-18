@@ -53,7 +53,10 @@ async function loadMap(scriptUrl) {
   const p = (async () => {
     try {
       const js = await (await fetch(scriptUrl, { cache: 'force-cache' })).text();
-      const m = /[#@]\s*sourceMappingURL=([^\s'"]+)\s*$/m.exec(js.slice(-4000));
+      // Inline (data:) maps can be megabytes long, so look for the last
+      // sourceMappingURL comment anywhere in the file, not just its tail.
+      const at = js.lastIndexOf('sourceMappingURL=');
+      const m = at >= 0 ? /sourceMappingURL=([^\s'"]+)/.exec(js.slice(at)) : null;
       let raw;
       if (!m) {
         const res = await fetch(scriptUrl + '.map');
@@ -80,6 +83,34 @@ function cleanSource(source, sourceRoot) {
   s = s.replace(/^webpack:\/\/\/?/, '').replace(/^[a-z-]+:\/\/\/?/, '').replace(/^\.\//, '');
   s = s.replace(/^(\.\.\/)+/, '');
   return s;
+}
+
+// Original source text for a project file (e.g. "src/app/foo.ts"), looked up in
+// the source maps of the given scripts. Uses `sourcesContent`, which Angular /
+// Vite / webpack dev builds include, so no file system access is needed.
+const sourceIndex = new Map(); // file → text
+export async function findSource(file, scriptUrls) {
+  const want = String(file || '').replace(/^\.?\//, '');
+  if (!want) return null;
+  if (sourceIndex.has(want)) return sourceIndex.get(want);
+  for (const url of scriptUrls) {
+    if (isLibrary(url)) continue;
+    const map = await loadMap(url);
+    const raw = map?.raw;
+    if (!raw?.sourcesContent) continue;
+    raw.sources.forEach((s, i) => {
+      const clean = cleanSource(s, raw.sourceRoot);
+      if (raw.sourcesContent[i] != null && !sourceIndex.has(clean)) sourceIndex.set(clean, raw.sourcesContent[i]);
+    });
+    if (sourceIndex.has(want)) return sourceIndex.get(want);
+  }
+  for (const [k, v] of sourceIndex) if (k.endsWith(want) || want.endsWith(k)) return v;
+  return null;
+}
+
+export function clearSourceCache() {
+  cache.clear();
+  sourceIndex.clear();
 }
 
 export async function resolve(url, line, col) {

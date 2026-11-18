@@ -5,9 +5,11 @@ asking while building a front end (Angular first, React/Vue basic support):
 
 | Tab | What it tells you |
 |---|---|
-| **Inspect** | Click **Pick**, then any area of the page: the component that rendered it, its source file and line (opens in your editor), parent components, current `input()`/signal/state values, event listeners, layout problems (overflow, hidden, covered, contrast, z-index), the box model, and which CSS rules apply and which are overridden. |
-| **Network** | Every `fetch`/`HttpClient` call: status, timing, request and response bodies (pretty JSON), headers, **the line in your code that made the call**, copy as cURL/fetch. Failed requests are marked in red. |
-| **Errors** | Uncaught errors, promise rejections, `console.error` (Angular's ErrorHandler) and failed requests, grouped with counts, mapped back to your `.ts` files via source maps, with links to the docs for `NG0xxx` codes. |
+| **Inspect** | Click **Pick**, then any area of the page. **Component** tab: the component, **its class and the template line that created the element, shown as code inside the panel**, inputs/signals/state, event listeners, parents. **Styles** tab: box model and the CSS rules that apply (overridden ones struck through). **Layout** tab: plain-language problems (overflow, hidden, covered, contrast, z-index). |
+| **Network** | Every request, classified like DevTools: type chips (API, Doc, JS, CSS, Img, Font) and status chips (2xx, 3xx, 4xx, 5xx, Failed) that combine as filters, a sortable table with a waterfall, and hints for common problems (401 not authenticated, 404 wrong URL, HTML instead of JSON, slow, large, duplicate calls). Click a row for Headers, Payload, Response, Preview (JSON tree), Timing and **Initiator: the line of your code that made the call**. |
+| **Errors** | Uncaught errors, promise rejections, `console.error` (Angular's ErrorHandler) and failed requests, grouped (Runtime, HTTP, Angular NG, Warnings), each with **the failing source line shown inline**, plus links to the docs for `NG0xxx` codes. |
+
+The header shows a health strip (errors, failed requests, layout issues) that jumps to the right tab.
 
 ## Install (developer mode)
 
@@ -25,6 +27,8 @@ the page scrolls or a carousel moves under a still cursor.
 
 ## Notes
 
+- Code shown in the panel comes from the dev server's source maps (`sourcesContent`), so no file access is needed. API calls started by the framework itself (an `httpResource`, `resource` or `effect`) have no line of your code on the stack, and the Initiator tab says so.
+- Images and fonts from other origins show no status or headers: the browser only exposes those with a `Timing-Allow-Origin` header. Dev-server internals (Vite, Angular hot updates) are hidden from the list.
 - Component names and files need a **development build** (`ng serve`): Angular exposes them only in dev mode (`ng` global + `ɵcmp.debugInfo`). In production builds, Network, Errors and the CSS checks still work.
 - The panel can be opened as a page pinned to one tab for debugging: `chrome-extension://<id>/sidepanel/index.html?tabId=<tabId>`.
 

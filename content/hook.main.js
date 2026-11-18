@@ -13,7 +13,8 @@
   const OUT = '__felens:out';
   const IN = '__felens:in';
   const MAX_BODY = 200 * 1024;
-  const IGNORE_URL = /\/@vite\/|\/@fs\/|\/__vite_ping|sockjs-node|\/ng-cli-ws|hot-update\.json/;
+  // Dev-server internals (Vite, Angular HMR / component hot-updates, websockets).
+  const IGNORE_URL = /\/@vite\/|\/@fs\/|\/@ng\/|\/@id\/|\/__vite_ping|sockjs-node|\/ng-cli-ws|hot-update\.json/;
 
   const emit = (type, payload) => {
     try {
@@ -142,10 +143,10 @@
       const id = nextId();
       const start = now();
       const limit = Error.stackTraceLimit;
-      Error.stackTraceLimit = 60; // RxJS chains are deep; keep the app frame
+      Error.stackTraceLimit = 100; // RxJS chains are deep; keep the app frame
       const stack = new Error().stack;
       Error.stackTraceLimit = limit;
-      emit('net:start', { id, kind: 'fetch', url, method, start, reqHeaders, reqBody, initiator: stack });
+      emit('net:start', { id, kind: 'fetch', type: 'api', url, method, start, reqHeaders, reqBody, initiator: stack });
 
       const p = origFetch.apply(this, arguments);
       p.then(
@@ -192,7 +193,11 @@
       const info = this.__fl;
       if (info && !IGNORE_URL.test(info.url)) {
         const id = nextId();
-        emit('net:start', { id, kind: 'xhr', url: info.url, method: info.method, start: now(), reqHeaders: info.reqHeaders, reqBody: describeBody(body), initiator: new Error().stack });
+        const limit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 100;
+        const initiator = new Error().stack;
+        Error.stackTraceLimit = limit;
+        emit('net:start', { id, kind: 'xhr', type: 'api', url: info.url, method: info.method, start: now(), reqHeaders: info.reqHeaders, reqBody: describeBody(body), initiator });
         this.addEventListener('loadend', () => {
           try {
             const resHeaders = (this.getAllResponseHeaders() || '')
@@ -212,6 +217,73 @@
       return origSend.apply(this, arguments);
     };
   }
+
+  // ───────────── all other resources (JS, CSS, images, fonts, docs) ─────────────
+  // fetch/XHR are captured above with full bodies. Everything else comes from the
+  // Resource Timing API, which (in Chromium) also reports the HTTP status.
+  const RES_EXT = [
+    [/\.(m?js)(\?|$)/i, 'js'], [/\.css(\?|$)/i, 'css'],
+    [/\.(png|jpe?g|gif|webp|avif|svg|ico|bmp)(\?|$)/i, 'img'],
+    [/\.(woff2?|ttf|otf|eot)(\?|$)/i, 'font'], [/\.(mp4|webm|mp3|ogg|wav|m3u8)(\?|$)/i, 'media'],
+    [/\.(json|map)(\?|$)/i, 'other'],
+  ];
+  function resType(e) {
+    const t = e.initiatorType;
+    if (e.entryType === 'navigation' || t === 'iframe' || t === 'frame') return 'doc';
+    if (t === 'script') return 'js';
+    if (t === 'css' && /\.(woff2?|ttf|otf)(\?|$)/i.test(e.name)) return 'font';
+    if (t === 'img' || t === 'image' || t === 'icon') return 'img';
+    if (t === 'video' || t === 'audio' || t === 'track') return 'media';
+    const ct = e.contentType || '';
+    if (/javascript/.test(ct)) return 'js';
+    if (/css/.test(ct)) return 'css';
+    if (/^image\//.test(ct)) return 'img';
+    if (/font/.test(ct)) return 'font';
+    if (/html/.test(ct)) return 'doc';
+    for (const [re, type] of RES_EXT) if (re.test(e.name)) return type;
+    if (t === 'link' || t === 'css') return 'css';
+    return 'other';
+  }
+  let resSeq = 0;
+  let resQueue = [];
+  let resTimer = 0;
+  function onResources(entries) {
+    for (const e of entries) {
+      if (e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest' || e.initiatorType === 'beacon') continue;
+      if (IGNORE_URL.test(e.name) || e.name.startsWith('chrome-extension:') || e.name.startsWith('data:')) continue;
+      const phase = (a, b) => (e[a] > 0 && e[b] > 0 ? Math.max(0, Math.round(e[b] - e[a])) : null);
+      resQueue.push({
+        id: `r${(resSeq++).toString(36)}`,
+        kind: 'res',
+        type: resType(e),
+        url: e.name,
+        method: 'GET',
+        start: performance.timeOrigin + e.startTime,
+        end: performance.timeOrigin + e.responseEnd,
+        // 0 = unknown (cross-origin without Timing-Allow-Origin, or blocked).
+        status: e.responseStatus || null,
+        size: e.transferSize || e.encodedBodySize || 0,
+        cached: e.transferSize === 0 && e.decodedBodySize > 0,
+        contentType: e.contentType || '',
+        initiatorType: e.initiatorType || e.entryType,
+        phases: {
+          dns: phase('domainLookupStart', 'domainLookupEnd'),
+          connect: phase('connectStart', 'connectEnd'),
+          waiting: phase('requestStart', 'responseStart'),
+          download: phase('responseStart', 'responseEnd'),
+        },
+      });
+    }
+    clearTimeout(resTimer);
+    resTimer = setTimeout(() => {
+      if (resQueue.length) emit('res', resQueue);
+      resQueue = [];
+    }, 250);
+  }
+  try {
+    new PerformanceObserver((list) => onResources(list.getEntries())).observe({ type: 'resource', buffered: true });
+    new PerformanceObserver((list) => onResources(list.getEntries())).observe({ type: 'navigation', buffered: true });
+  } catch { /* old browser */ }
 
   // ───────────────────────────── errors ─────────────────────────────
   // The same Error object often arrives twice (window 'error' + Angular's
@@ -391,6 +463,11 @@
       const found = this.hostComponentOf(el);
       if (found) window.ng?.applyChanges?.(found.cmp);
     },
+    // True when the element is itself a component host: then the markup that
+    // created it lives in the *parent* component's template.
+    isHost(el) {
+      try { return !!window.ng?.getComponent?.(el); } catch { return false; }
+    },
   };
 
   const reactKey = (el) => Object.keys(el).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
@@ -486,7 +563,12 @@
       const c = result.chain?.[0];
       return { name: c?.name || null, selector: c?.selector || null };
     }
-    return { framework: fw, element: describeEl(el), ...result };
+    return {
+      framework: fw,
+      element: describeEl(el),
+      elementIsHost: a?.isHost ? a.isHost(el) : false,
+      ...result,
+    };
   }
 
   // Requests from the isolated world. Element passed via a temporary attribute.

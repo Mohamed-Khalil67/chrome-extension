@@ -6,7 +6,7 @@
 
   const OUT = '__felens:out';
   const IN = '__felens:in';
-  const MAX_NET = 300;
+  const MAX_NET = 600;
   const MAX_ERR = 200;
 
   const state = {
@@ -102,6 +102,14 @@
         }
         break;
       }
+      case 'res': {
+        for (const r of payload) {
+          state.net.set(r.id, r);
+          if (state.net.size > MAX_NET) state.net.delete(state.net.keys().next().value);
+        }
+        toPanel('res', payload);
+        break;
+      }
       case 'err':
         addError(payload);
         break;
@@ -120,8 +128,20 @@
     let css = null;
     try { css = globalThis.FeLensCss.analyze(el); } catch (e) { css = { error: String(e?.message || e) }; }
     const r = el.getBoundingClientRect();
+    // Enough detail to find the element's line in its template.
+    const attrs = [...el.attributes]
+      .map((a) => a.name)
+      .filter((n) => !/^(_ng|ng-|data-felens|class$|style$|id$)/.test(n));
     state.selection = {
       element: fw.element || el.localName,
+      elementIsHost: !!fw.elementIsHost,
+      desc: {
+        tag: el.localName,
+        id: el.id || '',
+        classes: [...el.classList].filter((c) => !c.startsWith('ng-')),
+        attrs,
+        text: (el.childNodes.length && [...el.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim())?.textContent.trim().slice(0, 40)) || '',
+      },
       framework: fw.framework || state.framework,
       chain: fw.chain || [],
       listeners: fw.listeners || [],
@@ -154,6 +174,16 @@
           selection: state.selection,
           picking: globalThis.FeLensPicker.picking,
         });
+        return;
+      }
+      case 'scripts': {
+        // Same-origin scripts loaded so far (main bundle + lazy route chunks).
+        const urls = new Set();
+        for (const s of document.scripts) if (s.src) urls.add(s.src);
+        for (const e of performance.getEntriesByType('resource')) {
+          if (/\.m?js(\?|$)/.test(e.name) && e.name.startsWith(location.origin)) urls.add(e.name);
+        }
+        sendResponse([...urls].filter((u) => u.startsWith(location.origin)));
         return;
       }
       case 'picker:toggle':
