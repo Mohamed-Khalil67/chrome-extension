@@ -35,6 +35,12 @@
   `;
 
   let host, root, els, picking = false, hoverEl = null, selectedEl = null, raf = 0, onPick = null;
+  // Last pointer position while picking. The page can change under a still
+  // cursor (carousels, scrolling, layout shifts), so we re-hit-test every frame
+  // instead of only on pointermove. The click then selects exactly what is shown.
+  let pointer = null;
+  // When the user steps with ↑/↓, keep their choice until the pointer moves.
+  let manual = false;
 
   function ensureOverlay() {
     if (host?.isConnected) return;
@@ -50,7 +56,7 @@
         <div class="layer padding"></div><div class="layer content"></div>
       </div>
       <div class="label" hidden></div>
-      <div class="hint" hidden>Click an element to inspect · Esc to cancel</div>`;
+      <div class="hint" hidden>Click to inspect · ↑ ↓ parent / child · Esc to cancel</div>`;
     els = {
       box: root.querySelector('.box'),
       margin: root.querySelector('.margin'),
@@ -95,6 +101,10 @@
   function loop() {
     cancelAnimationFrame(raf);
     const tick = () => {
+      if (picking && pointer && !manual) {
+        const el = hitTest(pointer.x, pointer.y);
+        if (el && el !== hoverEl) { hoverEl = el; setLabel(el); }
+      }
       const target = picking ? hoverEl : selectedEl;
       if (!target) {
         els.box.hidden = true;
@@ -127,11 +137,28 @@
 
   const isOurs = (el) => el === host || el?.closest?.('[data-felens-ui]');
 
-  function onMove(e) {
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    if (!el || isOurs(el) || el === hoverEl) return;
+  // Topmost page element at a point, descending into open shadow roots
+  // (web components, Angular ViewEncapsulation.ShadowDom).
+  function hitTest(x, y) {
+    let el = document.elementFromPoint(x, y);
+    while (el?.shadowRoot) {
+      const inner = el.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    return el && !isOurs(el) ? el : null;
+  }
+
+  function setHover(el) {
+    if (!el || el === hoverEl) return;
     hoverEl = el;
     setLabel(el);
+  }
+
+  function onMove(e) {
+    pointer = { x: e.clientX, y: e.clientY };
+    manual = false;
+    setHover(hitTest(pointer.x, pointer.y));
   }
 
   function swallow(e) {
@@ -143,7 +170,9 @@
   function onClick(e) {
     if (!picking) return;
     swallow(e);
-    const el = document.elementFromPoint(e.clientX, e.clientY) || hoverEl;
+    // What you see is what you get: select the highlighted element. If the
+    // pointer never moved (e.g. picking started under the cursor), hit-test now.
+    const el = hoverEl || hitTest(e.clientX, e.clientY);
     stop();
     if (el && !isOurs(el)) {
       select(el);
@@ -152,7 +181,26 @@
   }
 
   function onKey(e) {
-    if (picking && e.key === 'Escape') { swallow(e); stop(); }
+    if (!picking) return;
+    if (e.key === 'Escape') { swallow(e); stop(); return; }
+    // ↑ parent, ↓ back toward the element under the pointer, Enter selects.
+    if (e.key === 'ArrowUp' && hoverEl?.parentElement && hoverEl.parentElement !== document.documentElement) {
+      swallow(e); manual = true; setHover(hoverEl.parentElement);
+    } else if (e.key === 'ArrowDown' && hoverEl) {
+      swallow(e);
+      const under = pointer ? hitTest(pointer.x, pointer.y) : null;
+      let child = null;
+      // Step one level down along the path to the element under the pointer.
+      for (let n = under; n && n !== hoverEl; n = n.parentElement) child = n;
+      child ??= hoverEl.firstElementChild;
+      if (child) { manual = true; setHover(child); }
+    } else if (e.key === 'Enter' && hoverEl) {
+      swallow(e);
+      const el = hoverEl;
+      stop();
+      select(el);
+      onPick?.(el);
+    }
   }
 
   function start(cb) {
@@ -160,6 +208,8 @@
     show();
     picking = true;
     hoverEl = null;
+    manual = false;
+    pointer = null;
     els.hint.hidden = false;
     document.documentElement.style.cursor = 'crosshair';
     addEventListener('pointermove', onMove, true);

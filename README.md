@@ -18,7 +18,10 @@ asking while building a front end (Angular first, React/Vue basic support):
 
 FE Lens runs on `localhost`, `127.0.0.1`, `*.localhost` and `*.test` by default. On any other site, the panel offers **Turn on for this site**.
 
-Shortcut: **Alt+Shift+X** starts the picker.
+Shortcut: **Alt+Shift+X** starts the picker. While picking: **↑** selects the parent,
+**↓** steps back toward the element under the cursor, **Enter** or click selects,
+**Esc** cancels. The highlight always matches what a click will select, even when
+the page scrolls or a carousel moves under a still cursor.
 
 ## Notes
 
