@@ -1,0 +1,17 @@
+{
+  "name": "angular-lens",
+  "version": "0.6.0",
+  "private": true,
+  "description": "Chrome side-panel extension for debugging Angular apps.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
