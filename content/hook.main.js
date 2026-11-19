@@ -1,11 +1,11 @@
-// FE Lens — page (MAIN world) hook. Runs at document_start, before the app.
+// Angular Lens — page (MAIN world) hook. Runs at document_start, before the app.
 // Captures fetch/XHR traffic and runtime errors, and answers "which component
 // rendered this element?" using framework debug APIs (Angular `ng` global,
 // React fibers, Vue component instances).
 //
 // Talks to the isolated content script (bridge.js) through CustomEvents on
 // `document` with JSON-string payloads (only strings cross worlds reliably).
-// Everything here is wrapped so a bug in FE Lens can never break the page.
+// Everything here is wrapped so a bug in Angular Lens can never break the page.
 (() => {
   if (window.__feLensHooked) return;
   window.__feLensHooked = true;
@@ -374,7 +374,7 @@
   function emitLog(level, args) {
     const t = Date.now();
     if (t - logWindow > 1000) {
-      if (logDropped) emit('log', { id: nextId(), level: 'warn', args: [{ t: 'str', v: `FE Lens skipped ${logDropped} console messages (more than 300 per second).` }], time: t, stack: '' });
+      if (logDropped) emit('log', { id: nextId(), level: 'warn', args: [{ t: 'str', v: `Angular Lens skipped ${logDropped} console messages (more than 300 per second).` }], time: t, stack: '' });
       logWindow = t; logCount = 0; logDropped = 0;
     }
     if (++logCount > 300) { logDropped++; return; }

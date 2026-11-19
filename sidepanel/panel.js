@@ -1,4 +1,4 @@
-// FE Lens side panel shell: tabs, settings, connection to the inspected tab,
+// Angular Lens side panel shell: tabs, settings, connection to the inspected tab,
 // live events, and the health strip. Feature logic lives in the tab modules.
 import { S, $, $$, esc, send, on } from './core.js';
 import { clearSourceCache } from './sourcemap.js';
@@ -6,6 +6,7 @@ import * as network from './network.js';
 import * as errors from './errors.js';
 import * as inspect from './inspect.js';
 import * as con from './console.js';
+import * as requests from './requests.js';
 
 // ───────────── framework badge ─────────────
 function renderFramework() {
@@ -48,7 +49,7 @@ $('#health').addEventListener('click', (e) => {
 });
 
 // ───────────── tabs ─────────────
-const tabs = ['inspect', 'network', 'console'];
+const tabs = ['inspect', 'network', 'requests', 'console'];
 function selectTab(name) {
   for (const t of tabs) {
     const tab = $(`#tab-${t}`), panel = $(`#panel-${t}`);
@@ -113,11 +114,11 @@ async function showOffline() {
   const origin = siteOrigin(S.tabUrl);
   const granted = origin ? await chrome.permissions.contains({ origins: [origin] }) : false;
   if (!origin) {
-    box.innerHTML = '<h2>Open your app to start</h2><p>FE Lens works on web pages such as <code>http://localhost:4200</code>.</p>';
+    box.innerHTML = '<h2>Open your app to start</h2><p>Angular Lens works on web pages such as <code>http://localhost:4200</code>.</p>';
   } else if (granted) {
-    box.innerHTML = '<h2>Reload the page to connect</h2><p>FE Lens starts with the page, so it can record requests and errors from the first moment.</p><button type="button" class="btn primary" data-act="reload">Reload page</button>';
+    box.innerHTML = '<h2>Reload the page to connect</h2><p>Angular Lens starts with the page, so it can record requests and errors from the first moment.</p><button type="button" class="btn primary" data-act="reload">Reload page</button>';
   } else {
-    box.innerHTML = `<h2>FE Lens is off for this site</h2><p>It runs on localhost by default. Turn it on for <code>${esc(new URL(S.tabUrl).hostname)}</code> to inspect it too.</p><button type="button" class="btn primary" data-act="enable">Turn on for this site</button>`;
+    box.innerHTML = `<h2>Angular Lens is off for this site</h2><p>It runs on localhost by default. Turn it on for <code>${esc(new URL(S.tabUrl).hostname)}</code> to inspect it too.</p><button type="button" class="btn primary" data-act="enable">Turn on for this site</button>`;
   }
   box.hidden = false;
 }
@@ -205,6 +206,8 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 // ───────────── start ─────────────
 network.init();
 con.init();
+requests.init();
+on('goto-tab', selectTab);
 inspect.init({ startPick, gotoErrors: () => { selectTab('network'); network.showErrors(); } });
 
 (async () => {

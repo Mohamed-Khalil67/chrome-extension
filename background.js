@@ -1,10 +1,10 @@
-// FE Lens service worker. Stateless on purpose: the service worker can be
+// Angular Lens service worker. Stateless on purpose: the service worker can be
 // stopped at any time, so per-page data lives in the content script (bridge.js)
 // and settings live in chrome.storage.
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((err) => console.error('FE Lens: setPanelBehavior failed', err));
+  .catch((err) => console.error('Angular Lens: setPanelBehavior failed', err));
 
 // Keyboard shortcut → start the picker in the active tab.
 chrome.commands.onCommand.addListener(async (command) => {

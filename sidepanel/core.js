@@ -1,4 +1,4 @@
-// Shared state and helpers for the FE Lens side panel modules.
+// Shared state and helpers for the Angular Lens side panel modules.
 
 export const S = {
   windowId: null,

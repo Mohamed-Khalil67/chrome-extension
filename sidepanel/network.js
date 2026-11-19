@@ -517,6 +517,7 @@ async function renderDetail(id, keepTab = false) {
       <div class="tab-body" role="tabpanel">${body}</div>
       ${n.type === 'api' ? `
       <div class="actions">
+        <button type="button" class="btn small" data-act="to-requests">Open in Requests</button>
         <button type="button" class="btn small" data-copy="curl">Copy as cURL</button>
         <button type="button" class="btn small" data-copy="fetch">Copy as fetch</button>
         <button type="button" class="btn small" data-copy="response">Copy response</button>
@@ -619,6 +620,7 @@ export function init() {
   const detail = $('#net-detail');
   detail.addEventListener('click', async (e) => {
     if (e.target.closest('[data-act="back"]')) return closeDetail();
+    if (e.target.closest('[data-act="to-requests"]')) { emit('to-requests', S.net.get(selectedId)); emit('goto-tab', 'requests'); return; }
     const jump = e.target.closest('[data-open]');
     if (jump) return openDetail(jump.dataset.open);
     const tab = e.target.closest('[data-tab]');

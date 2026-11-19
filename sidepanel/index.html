@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>FE Lens</title>
+  <title>Angular Lens</title>
   <link rel="stylesheet" href="panel.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <img src="../icons/icon-32.png" width="20" height="20" alt="">
-      <span>FE Lens</span>
+      <span>Angular Lens</span>
     </div>
     <div class="fw" id="fw" aria-live="polite"></div>
     <button type="button" class="btn primary" id="pick" aria-pressed="false" title="Pick an element (Alt+Shift+X)">
@@ -45,9 +45,10 @@
   </div>
 
   <div class="tabs">
-    <div class="tablist" focusgroup="tablist nomemory" aria-label="FE Lens views">
+    <div class="tablist" focusgroup="tablist nomemory" aria-label="Angular Lens views">
       <button type="button" role="tab" id="tab-inspect" aria-selected="true" focusgroupstart>Inspect</button>
       <button type="button" role="tab" id="tab-network">Network <span class="count" id="net-count"></span> <span class="count bad" id="err-count"></span></button>
+      <button type="button" role="tab" id="tab-requests">Requests</button>
       <button type="button" role="tab" id="tab-console">Console <span class="count" id="con-count"></span></button>
     </div>
 
@@ -99,6 +100,25 @@
             <p class="empty" id="net-nomatch" hidden>Nothing matches these filters.</p>
           </div>
           <div id="net-detail" class="net-detail" hidden></div>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-requests" aria-labelledby="tab-requests" hidden>
+        <div class="wrap requests">
+          <div class="rq-top">
+            <select id="rq-history" aria-label="Recent requests"></select>
+            <button type="button" class="btn ghost small" id="rq-new">New</button>
+          </div>
+          <form id="rq-form" class="rq-bar">
+            <select id="rq-method" aria-label="Method"></select>
+            <input id="rq-url" type="text" spellcheck="false" autocomplete="off" aria-label="URL" placeholder="{{api}}/products?page=1 or https://…">
+            <button type="submit" class="btn primary" id="rq-send">Send</button>
+          </form>
+          <p class="rq-preview" id="rq-preview" aria-live="polite"></p>
+          <div class="subtabs" id="rq-sub" role="tablist" aria-label="Request"></div>
+          <div id="rq-pane" class="rq-pane"></div>
+          <h3 class="rq-h">Response</h3>
+          <div id="rq-res"></div>
         </div>
       </section>
 

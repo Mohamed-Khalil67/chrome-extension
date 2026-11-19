@@ -1,4 +1,4 @@
-# FE Lens
+# Angular Lens
 
 A small Chrome side-panel extension that answers the three questions you keep
 asking while building a front end (Angular first, React/Vue basic support):
@@ -10,16 +10,18 @@ asking while building a front end (Angular first, React/Vue basic support):
 
 | **Console** | Everything the page logs (`log`, `info`, `warn`, `error`) with **the line of your code that logged it**, repeats collapsed, filters by level. A prompt at the bottom **runs JavaScript in the page** (`await` works, ↑/↓ recall history, Ctrl+L clears). `$0` is the element you picked, and in Angular `ng.getOwningComponent($0)` gives its component. |
 
+| **Requests** | Build and send an HTTP request (method, params, headers, JSON/form body, bearer/basic/API-key auth, `{{variables}}`) without CORS limits. Read the response, then copy **TypeScript interfaces** generated from the JSON (optional fields inferred across array items) and an **Angular service** method. In Network, **Open in Requests** replays any captured call. |
+
 The header shows a health strip (errors, failed requests, layout issues) that jumps to the right view.
 
 ## Install (developer mode)
 
 1. Open `chrome://extensions` and turn on **Developer mode**.
 2. **Load unpacked** → select this folder.
-3. Open your app (`ng serve` → `http://localhost:4200`), then click the FE Lens icon to open the side panel.
+3. Open your app (`ng serve` → `http://localhost:4200`), then click the Angular Lens icon to open the side panel.
 4. Open the ⚙ settings and set **Project folder** (the folder that contains `src/`) so file links open in VS Code, Cursor or WebStorm.
 
-FE Lens runs on `localhost`, `127.0.0.1`, `*.localhost` and `*.test` by default. On any other site, the panel offers **Turn on for this site**.
+Angular Lens runs on `localhost`, `127.0.0.1`, `*.localhost` and `*.test` by default. On any other site, the panel offers **Turn on for this site**.
 
 Shortcut: **Alt+Shift+X** starts the picker. While picking: **↑** selects the parent,
 **↓** steps back toward the element under the cursor, **Enter** or click selects,

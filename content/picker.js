@@ -1,4 +1,4 @@
-// FE Lens — element picker overlay (isolated world).
+// Angular Lens — element picker overlay (isolated world).
 // The overlay lives in a Shadow DOM inside a manual popover, so it sits in the
 // top layer above the app's own z-index stacks and the app's CSS can't touch it.
 (() => {

@@ -1,4 +1,4 @@
-// FE Lens — bridge (isolated world). Owns the per-page buffers (network +
+// Angular Lens — bridge (isolated world). Owns the per-page buffers (network +
 // errors), relays page-hook events to the side panel, and runs the picker and
 // CSS analysis on request.
 (() => {

@@ -1,4 +1,4 @@
-// FE Lens — CSS analysis for one element (isolated world; shares the DOM).
+// Angular Lens — CSS analysis for one element (isolated world; shares the DOM).
 // Returns: box model, matched rules (with overridden declarations marked),
 // and plain-language warnings for the usual "why does it look like this?" bugs.
 (() => {
