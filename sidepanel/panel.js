@@ -26,6 +26,7 @@ function renderCounts() {
   const layoutN = inspect.layoutWarnings();
   $('#net-count').textContent = S.net.size || '';
   $('#err-count').textContent = errN || '';
+  $('#err-count').title = errN ? `${errN} JS error${errN > 1 ? 's' : ''}` : '';
   const strip = [];
   if (errN) strip.push(`<button type="button" class="health bad" data-go="errors">${errN} error${errN > 1 ? 's' : ''}</button>`);
   if (failN) strip.push(`<button type="button" class="health bad" data-go="failed">${failN} failed request${failN > 1 ? 's' : ''}</button>`);
@@ -38,13 +39,13 @@ on('errors-mapped', () => { if (S.selection) inspect.render(); });
 
 $('#health').addEventListener('click', (e) => {
   const go = e.target.closest('[data-go]')?.dataset.go;
-  if (go === 'errors') selectTab('errors');
+  if (go === 'errors') { selectTab('network'); network.showErrors(); }
   if (go === 'failed') { selectTab('network'); network.showProblems(); }
   if (go === 'layout') { selectTab('inspect'); inspect.showLayout(); }
 });
 
 // ───────────── tabs ─────────────
-const tabs = ['inspect', 'network', 'errors'];
+const tabs = ['inspect', 'network'];
 function selectTab(name) {
   for (const t of tabs) {
     const tab = $(`#tab-${t}`), panel = $(`#panel-${t}`);
@@ -53,11 +54,6 @@ function selectTab(name) {
     tab.toggleAttribute('focusgroupstart', onTab);
     tab.tabIndex = onTab ? 0 : -1;
     panel.hidden = !onTab;
-  }
-  // Errors: open the newest error so its code is visible right away.
-  if (name === 'errors' && !$('#err-list details[open]')) {
-    const first = [...$$('#err-list details')].find((d) => !d.hidden);
-    if (first) first.open = true;
   }
 }
 for (const t of tabs) $(`#tab-${t}`).addEventListener('click', () => selectTab(t));
@@ -201,8 +197,7 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 
 // ───────────── start ─────────────
 network.init();
-errors.init({ onShowRequest: (id) => { selectTab('network'); network.openDetail(id); } });
-inspect.init({ startPick, gotoErrors: () => selectTab('errors') });
+inspect.init({ startPick, gotoErrors: () => { selectTab('network'); network.showErrors(); } });
 
 (async () => {
   const win = await chrome.windows.getCurrent();

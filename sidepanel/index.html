@@ -47,8 +47,7 @@
   <div class="tabs">
     <div class="tablist" focusgroup="tablist nomemory" aria-label="FE Lens views">
       <button type="button" role="tab" id="tab-inspect" aria-selected="true" focusgroupstart>Inspect</button>
-      <button type="button" role="tab" id="tab-network">Network <span class="count" id="net-count"></span></button>
-      <button type="button" role="tab" id="tab-errors">Errors <span class="count bad" id="err-count"></span></button>
+      <button type="button" role="tab" id="tab-network">Network and errors <span class="count" id="net-count"></span> <span class="count bad" id="err-count"></span></button>
     </div>
 
     <main class="panels">
@@ -61,13 +60,10 @@
           <div id="net-list-view" class="wrap">
             <p class="net-summary" id="net-summary"></p>
             <div class="statbar" id="net-bar" aria-hidden="true"></div>
-            <div class="chips" id="net-status" data-multi role="group" aria-label="Filter by status">
-              <button type="button" data-value="2xx" aria-pressed="false" class="chip s-2xx">2xx <span class="n"></span></button>
-              <button type="button" data-value="3xx" aria-pressed="false" class="chip s-3xx">3xx <span class="n"></span></button>
-              <button type="button" data-value="4xx" aria-pressed="false" class="chip s-4xx">4xx <span class="n"></span></button>
-              <button type="button" data-value="5xx" aria-pressed="false" class="chip s-5xx">5xx <span class="n"></span></button>
-              <button type="button" data-value="failed" aria-pressed="false" class="chip s-failed">Failed <span class="n"></span></button>
-            </div>
+            <section class="codes" id="net-codes" aria-labelledby="codes-h" hidden>
+              <header><h2 id="codes-h">Responses by status code</h2><button type="button" class="btn ghost small codes-reset" hidden>Show all</button></header>
+              <div class="codes-list" role="group" aria-label="Filter by status code"></div>
+            </section>
             <div class="typebar" id="net-types" role="group" aria-label="Filter by type">
               <button type="button" data-value="all" aria-pressed="true">All<span class="n"></span></button>
               <button type="button" data-value="api" aria-pressed="false">API <span class="n"></span></button>
@@ -77,9 +73,10 @@
               <button type="button" data-value="img" aria-pressed="false">Img <span class="n"></span></button>
               <button type="button" data-value="font" aria-pressed="false">Font <span class="n"></span></button>
               <button type="button" data-value="other" aria-pressed="false">Other <span class="n"></span></button>
+              <button type="button" data-value="error" aria-pressed="false">Errors <span class="n"></span></button>
             </div>
             <div class="toolbar">
-              <input type="search" id="net-q" placeholder="Filter by URL, method or status" aria-label="Filter requests">
+              <input type="search" id="net-q" placeholder="Filter by URL, status or error text" aria-label="Filter requests and errors">
               <label class="toggle"><input type="checkbox" id="net-problems"> Problems only</label>
               <button type="button" class="btn ghost small" id="net-clear">Clear</button>
             </div>
@@ -97,30 +94,13 @@
               <tbody id="net-rows"></tbody>
             </table>
             <span id="net-sort-status" role="status" class="sr-only"></span>
-            <p class="empty" id="net-empty">No requests yet. Use the app and its requests show up here.</p>
-            <p class="empty" id="net-nomatch" hidden>No requests match these filters.</p>
+            <p class="empty" id="net-empty">No requests or errors yet. Use the app and they show up here.</p>
+            <p class="empty" id="net-nomatch" hidden>Nothing matches these filters.</p>
           </div>
           <div id="net-detail" class="net-detail" hidden></div>
         </div>
       </section>
 
-      <section role="tabpanel" id="panel-errors" aria-labelledby="tab-errors" hidden>
-        <div class="wrap">
-          <div class="toolbar">
-            <div class="chips" id="err-kinds" role="group" aria-label="Filter by kind">
-              <button type="button" class="chip" data-value="all" aria-pressed="true">All <span class="n"></span></button>
-              <button type="button" class="chip" data-value="runtime" aria-pressed="false">Runtime <span class="n"></span></button>
-              <button type="button" class="chip" data-value="http" aria-pressed="false">HTTP <span class="n"></span></button>
-              <button type="button" class="chip" data-value="ng" aria-pressed="false">Angular NG <span class="n"></span></button>
-              <button type="button" class="chip" data-value="warn" aria-pressed="false">Warnings <span class="n"></span></button>
-            </div>
-            <span class="spacer"></span>
-            <button type="button" class="btn ghost small" id="err-clear">Clear</button>
-          </div>
-          <div id="err-list" class="list"></div>
-          <p class="empty" id="err-empty">No errors. Runtime errors, failed requests and Angular NG codes show up here.</p>
-        </div>
-      </section>
     </main>
   </div>
 

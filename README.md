@@ -6,10 +6,9 @@ asking while building a front end (Angular first, React/Vue basic support):
 | Tab | What it tells you |
 |---|---|
 | **Inspect** | Click **Pick**, then any area of the page. **Component** tab: the component, **its class and the template line that created the element, shown as code inside the panel**, inputs/signals/state, event listeners, parents. **Styles** tab: box model and the CSS rules that apply (overridden ones struck through). **Layout** tab: plain-language problems (overflow, hidden, covered, contrast, z-index). |
-| **Network** | Every request, classified like DevTools: type chips (API, Doc, JS, CSS, Img, Font) and status chips (2xx, 3xx, 4xx, 5xx, Failed) that combine as filters, a sortable table with a waterfall, and hints for common problems (401 not authenticated, 404 wrong URL, HTML instead of JSON, slow, large, duplicate calls). Click a row for Headers, Payload, Response, Preview (JSON tree), Timing and **Initiator: the line of your code that made the call**. |
-| **Errors** | Uncaught errors, promise rejections, `console.error` (Angular's ErrorHandler) and failed requests, grouped (Runtime, HTTP, Angular NG, Warnings), each with **the failing source line shown inline**, plus links to the docs for `NG0xxx` codes. |
+| **Network and errors** | Every request **and every JS error on one timeline**. At the top, **Responses by status code**: one bar per code the page got (200, 304, 401, 404, 500…), JS errors and Angular NG errors, each with what it means. Click a bar to filter. Type tabs (API, Doc, JS, CSS, Img, Font, Errors), a sortable table with a waterfall where errors show as markers, and hints for common problems (HTML instead of JSON, slow, large, duplicate calls). Click a request for **what the backend is saying, what to check in the front end and in the backend, the server's own message**, the JS errors just before it, then Headers, Payload, Response, Preview, Timing and **Initiator: the line of your code that made the call**. Click an error for **the failing source line**, a plain explanation, and docs links for `NG0xxx` codes. |
 
-The header shows a health strip (errors, failed requests, layout issues) that jumps to the right tab.
+The header shows a health strip (errors, failed requests, layout issues) that jumps to the right view.
 
 ## Install (developer mode)
 
