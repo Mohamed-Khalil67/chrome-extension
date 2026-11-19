@@ -353,7 +353,8 @@ figure.code .ln.hl .no { color: var(--ink); font-weight: 650; }
 @container (width < 380px) { .c-size, .c-type { display: none; } }
 
 /* ── network: detail (drill-down over the list) ── */
-.net-detail { position: absolute; inset: 0; background: var(--paper); display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.net-detail { position: absolute; inset: 0; background: var(--paper); display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); }
+.detail-scroll { min-width: 0; }
 @media (prefers-reduced-motion: no-preference) {
   .net-detail:not([hidden]) { animation: slide-in .16s ease-out; }
   @keyframes slide-in { from { translate: 24px 0; opacity: 0; } }
