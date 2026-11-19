@@ -13,7 +13,7 @@ The header shows a health strip (errors, failed API calls, layout issues) that j
 
 ## Install (developer mode)
 
-1. `npm install`, then `npm run build`. The extension is built into `dist/`.
+1. Use the built `dist/` folder as it is (it is committed), or rebuild it with `npm install` then `npm run build`.
 2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and select the `dist/` folder.
 3. Open your app (`ng serve` → `http://localhost:4200`), then click the Angular Lens icon to open the side panel.
 4. In ⚙ settings, set **Project folder** (the folder that contains `src/`) so file links open in VS Code, Cursor or WebStorm.
