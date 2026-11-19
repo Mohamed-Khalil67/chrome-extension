@@ -5,6 +5,7 @@ import { clearSourceCache } from './sourcemap.js';
 import * as network from './network.js';
 import * as errors from './errors.js';
 import * as inspect from './inspect.js';
+import * as con from './console.js';
 
 // ───────────── framework badge ─────────────
 function renderFramework() {
@@ -27,6 +28,8 @@ function renderCounts() {
   $('#net-count').textContent = S.net.size || '';
   $('#err-count').textContent = errN || '';
   $('#err-count').title = errN ? `${errN} JS error${errN > 1 ? 's' : ''}` : '';
+  $('#con-count').textContent = con.total() || '';
+  $('#con-count').classList.toggle('bad', con.errorCount() > 0);
   const strip = [];
   if (errN) strip.push(`<button type="button" class="health bad" data-go="errors">${errN} error${errN > 1 ? 's' : ''}</button>`);
   if (failN) strip.push(`<button type="button" class="health bad" data-go="failed">${failN} failed request${failN > 1 ? 's' : ''}</button>`);
@@ -45,7 +48,7 @@ $('#health').addEventListener('click', (e) => {
 });
 
 // ───────────── tabs ─────────────
-const tabs = ['inspect', 'network'];
+const tabs = ['inspect', 'network', 'console'];
 function selectTab(name) {
   for (const t of tabs) {
     const tab = $(`#tab-${t}`), panel = $(`#panel-${t}`);
@@ -143,6 +146,7 @@ function enableSite() {
 function resetView() {
   S.selection = null; S.framework = null; S.scripts = [];
   network.clear();
+  con.clear();
   errors.clear();
   setPicking(false);
   clearSourceCache();
@@ -167,7 +171,9 @@ async function connect() {
   setPicking(!!snap.picking);
   for (const n of snap.net) { S.net.set(n.id, n); network.upsert(n); }
   for (const e of snap.errors) errors.add(e);
+  for (const m of snap.logs || []) con.add(m);
   renderFramework();
+  $('#con-empty').innerHTML = con.hints();
   inspect.render();
 }
 
@@ -181,6 +187,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     case 'res': network.addResources(p); break;
     case 'err:add': errors.add(p); break;
     case 'err:update': errors.update(p); break;
+    case 'log': con.add(p); break;
     case 'selection': S.selection = p; setPicking(false); selectTab('inspect'); inspect.render(); break;
     case 'picker': setPicking(p.active); break;
   }
@@ -197,6 +204,7 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 
 // ───────────── start ─────────────
 network.init();
+con.init();
 inspect.init({ startPick, gotoErrors: () => { selectTab('network'); network.showErrors(); } });
 
 (async () => {

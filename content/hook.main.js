@@ -340,11 +340,84 @@
           .replace(/^ERROR\s+/, '');
         const p = errorPayload(level === 'error' ? 'console' : 'warn', errObj || text);
         if (errObj) p.message = text || p.message;
-        if (!p.stack) p.stack = new Error().stack.split('\n').slice(2).join('\n');
+        if (!p.stack) p.stack = new Error().stack.split('\n').slice(1).filter((l) => !/hook\.main\.js/.test(l)).join('\n');
         emit('err', p);
       } catch { /* ignore */ }
       return orig.apply(this, args);
     };
+  }
+
+  // ───────────────────────────── console ─────────────────────────────
+  // Every console.log/info/debug/warn/error, with its call site, for the
+  // Console tab. At most 300 per second so a logging loop can't flood the panel.
+  const brief = (v) => {
+    if (typeof v === 'string') return v;
+    if (v == null || typeof v !== 'object') return String(v);
+    try { const s = JSON.stringify(v); return s.length > 300 ? s.slice(0, 300) + '…' : s; } catch { return String(v); }
+  };
+  // printf-style substitutions (%s %d %i %f %o %O %j %c), like DevTools.
+  function formatArgs(args) {
+    if (typeof args[0] !== 'string' || !/%[sdifoOjc%]/.test(args[0])) return args;
+    let i = 1;
+    const text = args[0].replace(/%([sdifoOjc%])/g, (m, c) => {
+      if (c === '%') return '%';
+      if (i >= args.length) return m;
+      const v = args[i++];
+      if (c === 'c') return '';
+      if (c === 'd' || c === 'i') return String(parseInt(v, 10));
+      if (c === 'f') return String(parseFloat(v));
+      return brief(v);
+    });
+    return [text, ...args.slice(i)];
+  }
+  let logWindow = 0, logCount = 0, logDropped = 0;
+  function emitLog(level, args) {
+    const t = Date.now();
+    if (t - logWindow > 1000) {
+      if (logDropped) emit('log', { id: nextId(), level: 'warn', args: [{ t: 'str', v: `FE Lens skipped ${logDropped} console messages (more than 300 per second).` }], time: t, stack: '' });
+      logWindow = t; logCount = 0; logDropped = 0;
+    }
+    if (++logCount > 300) { logDropped++; return; }
+    const stack = (new Error().stack || '').split('\n').slice(1).filter((l) => !/hook\.main\.js/.test(l)).join('\n');
+    emit('log', {
+      id: nextId(),
+      level,
+      args: formatArgs(args).map((a) => (typeof a === 'string' ? { t: 'str', v: a.length > 4000 ? a.slice(0, 4000) + '…' : a } : serialize(a, 1))),
+      time: t,
+      stack,
+    });
+  }
+  for (const level of ['log', 'info', 'debug', 'warn', 'error']) {
+    const prev = console[level];
+    console[level] = function (...args) {
+      try { emitLog(level, args); } catch { /* ignore */ }
+      return prev.apply(this, args);
+    };
+  }
+
+  // Run code typed in the Console tab, in the page's global scope. Code that
+  // uses `await` runs inside an async function. `$0` is the picked element.
+  async function runEval(msg) {
+    const done = (payload) => emit('eval:done', { id: msg.id, ...payload });
+    try {
+      const code = msg.code;
+      let result;
+      if (/\bawait\b/.test(code)) {
+        try { result = (0, eval)(`(async () => (${code}\n))()`); }
+        catch (e) { if (!(e instanceof SyntaxError)) throw e; result = (0, eval)(`(async () => {${code}\n})()`); }
+      } else {
+        result = (0, eval)(code);
+      }
+      if (result && typeof result.then === 'function') result = await result;
+      done({ ok: true, value: serialize(result, 0) });
+    } catch (e) {
+      const blocked = e instanceof EvalError || /unsafe-eval|Content Security Policy/i.test(String(e?.message));
+      done({
+        ok: false,
+        error: blocked ? 'This page blocks running code (its Content-Security-Policy has no unsafe-eval).' : `${e?.name || 'Error'}: ${e?.message ?? e}`,
+        stack: String(e?.stack || ''),
+      });
+    }
   }
 
   // ───────────────────────── framework adapters ─────────────────────────
@@ -586,6 +659,11 @@
         const el = document.querySelector(`[data-felens-q="${msg.q}"]`);
         if (el) angular.applyChanges(el);
         reply(true);
+      } else if (msg.type === 'eval') {
+        // Find $0 now: the bridge removes the marker attribute right after dispatch.
+        const el = msg.q ? document.querySelector(`[data-felens-q="${msg.q}"]`) : null;
+        if (el) window.$0 = el;
+        runEval(msg);
       }
     } catch (err) {
       reply({ error: String(err?.message || err) });

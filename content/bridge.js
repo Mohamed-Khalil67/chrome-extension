@@ -8,13 +8,17 @@
   const IN = '__felens:in';
   const MAX_NET = 600;
   const MAX_ERR = 200;
+  const MAX_LOG = 500;
 
   const state = {
     framework: null,
     net: new Map(), // id → entry (insertion ordered)
     errors: new Map(), // fingerprint → grouped error
+    logs: [], // console messages, oldest first
     selection: null,
   };
+  const pendingEval = new Map(); // id → sendResponse
+  let evalSeq = 0;
 
   const toPanel = (type, payload) => {
     chrome.runtime.sendMessage({ type: 'evt', evt: type, payload }).catch(() => { /* panel closed */ });
@@ -113,6 +117,17 @@
       case 'err':
         addError(payload);
         break;
+      case 'log':
+        state.logs.push(payload);
+        if (state.logs.length > MAX_LOG) state.logs.shift();
+        toPanel('log', payload);
+        break;
+      case 'eval:done': {
+        const respond = pendingEval.get(payload.id);
+        pendingEval.delete(payload.id);
+        respond?.(payload);
+        break;
+      }
     }
   });
 
@@ -171,6 +186,7 @@
           framework: state.framework,
           net: [...state.net.values()],
           errors: [...state.errors.values()],
+          logs: state.logs,
           selection: state.selection,
           picking: globalThis.FeLensPicker.picking,
         });
@@ -196,6 +212,23 @@
         return;
       case 'picker:stop':
         globalThis.FeLensPicker.stop();
+        sendResponse(true);
+        return;
+      case 'eval': {
+        // The page answers asynchronously (the code may await), so keep the
+        // channel open and reply when 'eval:done' arrives.
+        const id = ++evalSeq;
+        const timer = setTimeout(() => {
+          if (!pendingEval.delete(id)) return;
+          sendResponse({ ok: false, error: 'No result after 30 s: the promise never settled.' });
+        }, 30000);
+        pendingEval.set(id, (p) => { clearTimeout(timer); sendResponse(p); });
+        const sel = globalThis.FeLensPicker.selected;
+        rpc('eval', sel?.isConnected ? sel : null, { id, code: String(msg.code || '') });
+        return true;
+      }
+      case 'clear:logs':
+        state.logs = [];
         sendResponse(true);
         return;
       case 'reinspect': {

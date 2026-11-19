@@ -48,6 +48,7 @@
     <div class="tablist" focusgroup="tablist nomemory" aria-label="FE Lens views">
       <button type="button" role="tab" id="tab-inspect" aria-selected="true" focusgroupstart>Inspect</button>
       <button type="button" role="tab" id="tab-network">Network <span class="count" id="net-count"></span> <span class="count bad" id="err-count"></span></button>
+      <button type="button" role="tab" id="tab-console">Console <span class="count" id="con-count"></span></button>
     </div>
 
     <main class="panels">
@@ -101,6 +102,30 @@
         </div>
       </section>
 
+      <section role="tabpanel" id="panel-console" aria-labelledby="tab-console" hidden>
+        <div class="console">
+          <div class="con-bar">
+            <div class="typebar" id="con-levels" role="group" aria-label="Filter by level">
+              <button type="button" data-value="all" aria-pressed="true">All<span class="n"></span></button>
+              <button type="button" data-value="error" aria-pressed="false">Errors <span class="n"></span></button>
+              <button type="button" data-value="warn" aria-pressed="false">Warnings <span class="n"></span></button>
+              <button type="button" data-value="info" aria-pressed="false">Info <span class="n"></span></button>
+              <button type="button" data-value="log" aria-pressed="false">Logs <span class="n"></span></button>
+            </div>
+            <div class="toolbar">
+              <input type="search" id="con-q" placeholder="Filter messages" aria-label="Filter console messages">
+              <button type="button" class="btn ghost small" id="con-clear" title="Clear (Ctrl+L)">Clear</button>
+            </div>
+          </div>
+          <div id="con-list" class="con-list" role="log" aria-label="Console messages"></div>
+          <p class="empty con-empty" id="con-empty"></p>
+          <form id="con-form" class="con-form">
+            <span class="con-prompt" aria-hidden="true">›</span>
+            <textarea id="con-input" rows="1" spellcheck="false" autocomplete="off" aria-label="Run JavaScript in the page" placeholder="Run JavaScript, e.g. document.title"></textarea>
+            <button type="submit" class="btn small">Run</button>
+          </form>
+        </div>
+      </section>
     </main>
   </div>
 
