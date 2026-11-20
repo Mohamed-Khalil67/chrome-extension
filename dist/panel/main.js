@@ -1034,7 +1034,8 @@ function isBackendCall(n) {
   }
   if (TRACKERS.test(u.hostname)) return false;
   if (backendHosts.has(u.host)) return true;
-  return (n.status == null || n.status === 0 || n.status >= 400) && looksLikeApiRequest(n);
+  const unresolved = n.status == null || n.status === 0 || n.status >= 400;
+  return unresolved && (looksLikeApiRequest(n) || backendHosts.size === 0);
 }
 function statusClass(n) {
   if (n.statusText === "aborted") return "aborted";

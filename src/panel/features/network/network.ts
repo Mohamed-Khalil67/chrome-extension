@@ -53,8 +53,10 @@ export function isBackendCall(n: NetEntry): boolean {
   }
   if (TRACKERS.test(u.hostname)) return false;
   if (backendHosts.has(u.host)) return true;
-  // Failed or still pending: nothing to learn the host from yet. Count it only if it looks like an API call.
-  return (n.status == null || n.status === 0 || n.status >= 400) && looksLikeApiRequest(n);
+  // Failed or still pending: nothing to learn the host from yet. Count it if it looks like an API call,
+  // or if no backend has been identified at all (a backend that is down must still show up).
+  const unresolved = n.status == null || n.status === 0 || n.status >= 400;
+  return unresolved && (looksLikeApiRequest(n) || backendHosts.size === 0);
 }
 
 export function statusClass(n: NetEntry): StatusClass {
