@@ -256,8 +256,11 @@ function fileLink(file, line, col, label) {
   const text = esc(label ?? `${file}${line ? `:${line}` : ""}${col ? `:${col}` : ""}`);
   return `<button type="button" class="file-link" data-open-file="${esc(file)}" data-line="${line ?? 1}" data-col="${col ?? 1}" title="Open ${esc(file)} in your editor">${text}</button>`;
 }
+var openSettings = () => {
+  $("#settings").togglePopover(true);
+};
 function needsRoot() {
-  $("#settings").showPopover();
+  openSettings();
   $("#root").focus();
   $("#saved").textContent = "Set your project folder to open files.";
 }
@@ -274,10 +277,16 @@ async function openInEditor(file, line, col) {
     return;
   }
   if (S.settings.editor === "webstorm") {
-    $("#settings").showPopover();
+    openSettings();
     $("#ide-status").textContent = `No answer from WebStorm on port ${S.settings.idePort || DEFAULT_IDE_PORT}. Trying webstorm:// instead.`;
   }
-  if (S.tabId != null) await chrome.tabs.update(S.tabId, { url });
+  if (S.tabId == null) return;
+  try {
+    await chrome.tabs.update(S.tabId, { url });
+  } catch {
+    openSettings();
+    $("#ide-status").textContent = `Chrome couldn't hand ${url.split(":")[0]}:// to ${S.settings.editor}. Is the editor installed, and its URL handler registered?`;
+  }
 }
 document.addEventListener("click", (e) => {
   const b = closest(e, "[data-open-file]");
@@ -535,6 +544,7 @@ function append(row) {
   applyFilter(row);
   if (stick) list().scrollTop = list().scrollHeight;
   $("#con-empty").hidden = true;
+  updateNoMatch();
 }
 function rowFor(kind, inner, src = "") {
   const row = document.createElement("div");
@@ -635,21 +645,31 @@ var countOf = (k) => {
       return 0;
   }
 };
-function applyFilter(row) {
+var query = () => $("#con-q").value.trim().toLowerCase();
+function applyFilter(row, q = query()) {
   const lv = getLevel()[0] ?? "all";
   const levelOk = lv === "all" || row.dataset.level === lv;
-  row.hidden = !levelOk;
+  const textOk = !q || (row.textContent ?? "").toLowerCase().includes(q);
+  row.hidden = !(levelOk && textOk);
 }
 function refilter() {
-  for (const row of $$(".con-row", list())) applyFilter(row);
+  const q = query();
+  const rows2 = $$(".con-row", list());
+  for (const row of rows2) applyFilter(row, q);
   for (const b of $$("button", $("#con-levels"))) {
     const n = b.querySelector(".n");
     if (n) n.textContent = b.dataset.value === "all" ? "" : String(countOf(b.dataset.value ?? "") || "");
   }
+  updateNoMatch();
+}
+function updateNoMatch() {
+  const rows2 = $$(".con-row", list());
+  $("#con-nomatch").hidden = !rows2.length || rows2.some((r) => !r.hidden);
 }
 on("counts", refilter);
 function showErrors() {
   setChip($("#con-levels"), "error");
+  $("#con-q").value = "";
   refilter();
 }
 function clear2() {
@@ -658,6 +678,7 @@ function clear2() {
   last = null;
   for (const k of Object.keys(logCounts)) logCounts[k] = 0;
   $("#con-empty").hidden = false;
+  $("#con-nomatch").hidden = true;
   emit("counts");
 }
 async function run(code) {
@@ -686,6 +707,7 @@ function grow(t) {
 }
 function init() {
   getLevel = chipGroup($("#con-levels"), refilter);
+  input("#con-q").addEventListener("input", refilter);
   $("#con-clear").addEventListener("click", () => {
     void (async () => {
       await send({ type: "clear:logs" });
@@ -1380,7 +1402,6 @@ function refresh() {
   const what = scope === "all" ? "call" : "API call";
   $("#net-summary").innerHTML = all.length ? `${visible.length === all.length ? "" : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? "" : "s"} to <b>${esc(hosts.slice(0, 2).join(", "))}${hosts.length > 2 ? "\u2026" : ""}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ""}${fellBack ? ' \xB7 <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ""}` : "";
   $("#net-empty").hidden = all.length > 0;
-  $("#net-empty").innerHTML = S.net.size === 0 ? "No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one." : `${S.net.size} call${S.net.size === 1 ? "" : "s"} captured, but none to your backend. Switch to <b>All</b> above to see them.`;
   $("#net-nomatch").hidden = !(all.length && !visible.length);
   emit("counts");
 }

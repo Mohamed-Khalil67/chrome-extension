@@ -51,8 +51,11 @@ export function fileLink(file: string | null | undefined, line?: number | null, 
   return `<button type="button" class="file-link" data-open-file="${esc(file)}" data-line="${line ?? 1}" data-col="${col ?? 1}" title="Open ${esc(file)} in your editor">${text}</button>`;
 }
 
+// showPopover() throws if the popover is already open, so force it open instead.
+const openSettings = (): void => { $('#settings').togglePopover(true); };
+
 function needsRoot(): void {
-  $('#settings').showPopover();
+  openSettings();
   $('#root').focus();
   $('#saved').textContent = 'Set your project folder to open files.';
 }
@@ -64,11 +67,19 @@ export async function openInEditor(file: string, line: number, col: number): Pro
   const url = editorUrl(file, line, col);
   if (!url) { needsRoot(); return; }
   if (S.settings.editor === 'webstorm') {
-    $('#settings').showPopover();
+    openSettings();
     $('#ide-status').textContent = `No answer from WebStorm on port ${S.settings.idePort || DEFAULT_IDE_PORT}. Trying webstorm:// instead.`;
   }
   // An external-protocol URL is handed to the OS without navigating the tab.
-  if (S.tabId != null) await chrome.tabs.update(S.tabId, { url });
+  // Chrome rejects the call when no application is registered for the scheme:
+  // say so rather than failing silently.
+  if (S.tabId == null) return;
+  try {
+    await chrome.tabs.update(S.tabId, { url });
+  } catch {
+    openSettings();
+    $('#ide-status').textContent = `Chrome couldn't hand ${url.split(':')[0]}:// to ${S.settings.editor}. Is the editor installed, and its URL handler registered?`;
+  }
 }
 
 document.addEventListener('click', (e) => {

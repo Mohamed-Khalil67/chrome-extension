@@ -3,7 +3,7 @@
 import type { LogMsg, Val } from '../../../shared/messages';
 import { isAppFrame, mapStack } from '../../../shared/sourcemap';
 import { on, emit } from '../../core/bus';
-import { $, $$, chipGroup, closest, esc, setChip } from '../../core/dom';
+import { $, $$, chipGroup, closest, esc, input, setChip } from '../../core/dom';
 import { fileLink } from '../../core/editor';
 import { val } from '../../core/format';
 import { send } from '../../core/rpc';
@@ -37,6 +37,7 @@ function append(row: HTMLElement): void {
   applyFilter(row);
   if (stick) list().scrollTop = list().scrollHeight;
   $('#con-empty').hidden = true;
+  updateNoMatch();
 }
 
 function rowFor(kind: Level | 'in' | 'out', inner: string, src = ''): HTMLElement {
@@ -151,22 +152,36 @@ const countOf = (k: string): number => {
   }
 };
 
-function applyFilter(row: HTMLElement): void {
+const query = (): string => $<HTMLInputElement>('#con-q').value.trim().toLowerCase();
+
+function applyFilter(row: HTMLElement, q = query()): void {
   const lv = getLevel()[0] ?? 'all';
   const levelOk = lv === 'all' || row.dataset.level === lv; // prompt rows have no level: only under All
-  row.hidden = !levelOk;
+  // The text of the row covers the message, the expanded error body and the file name.
+  const textOk = !q || (row.textContent ?? '').toLowerCase().includes(q);
+  row.hidden = !(levelOk && textOk);
 }
 function refilter(): void {
-  for (const row of $$('.con-row', list())) applyFilter(row);
+  const q = query();
+  const rows = $$('.con-row', list());
+  for (const row of rows) applyFilter(row, q);
   for (const b of $$('button', $('#con-levels'))) {
     const n = b.querySelector('.n');
     if (n) n.textContent = b.dataset.value === 'all' ? '' : String(countOf(b.dataset.value ?? '') || '');
   }
+  updateNoMatch();
+}
+// "Nothing matches" only while there is something to match: the first-run hint
+// in #con-empty covers the empty console.
+function updateNoMatch(): void {
+  const rows = $$('.con-row', list());
+  $('#con-nomatch').hidden = !rows.length || rows.some((r) => !r.hidden);
 }
 on('counts', refilter);
 
 export function showErrors(): void {
   setChip($('#con-levels'), 'error');
+  $<HTMLInputElement>('#con-q').value = '';
   refilter();
 }
 
@@ -176,6 +191,7 @@ export function clear(): void {
   last = null;
   for (const k of Object.keys(logCounts) as Level[]) logCounts[k] = 0;
   $('#con-empty').hidden = false;
+  $('#con-nomatch').hidden = true;
   emit('counts');
 }
 
@@ -208,6 +224,7 @@ function grow(t: HTMLTextAreaElement): void {
 
 export function init(): void {
   getLevel = chipGroup($('#con-levels'), refilter);
+  input('#con-q').addEventListener('input', refilter);
   $('#con-clear').addEventListener('click', () => {
     void (async () => {
       await send({ type: 'clear:logs' });

@@ -239,10 +239,7 @@ export interface PanelRpc {
   'clear:logs': { req: { type: 'clear:logs' }; res: boolean };
   'clear:net': { req: { type: 'clear:net' }; res: boolean };
   'clear:errors': { req: { type: 'clear:errors' }; res: boolean };
-  reinspect: { req: { type: 'reinspect' }; res: Selection | null };
-  'select:parent': { req: { type: 'select:parent' }; res: Selection | null };
   'select:path': { req: { type: 'select:path'; path: number[] }; res: Selection | null };
-  'selection:clear': { req: { type: 'selection:clear' }; res: boolean };
 }
 export type PanelRequest = PanelRpc[keyof PanelRpc]['req'];
 // The panel keeps a port open to the content script while it is open; Alt+click

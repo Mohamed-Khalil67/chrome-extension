@@ -330,10 +330,10 @@ function refresh(): void {
   $('#net-summary').innerHTML = all.length
     ? `${visible.length === all.length ? '' : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? '' : 's'} to <b>${esc(hosts.slice(0, 2).join(', '))}${hosts.length > 2 ? '…' : ''}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ''}${fellBack ? ' · <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ''}`
     : '';
+  // Nothing in the table means nothing was captured at all: when the API
+  // heuristic matches none of the captured calls, syncRows lists them all
+  // (fellBack) and the summary above says so.
   $('#net-empty').hidden = all.length > 0;
-  $('#net-empty').innerHTML = S.net.size === 0
-    ? 'No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one.'
-    : `${S.net.size} call${S.net.size === 1 ? '' : 's'} captured, but none to your backend. Switch to <b>All</b> above to see them.`;
   $('#net-nomatch').hidden = !(all.length && !visible.length);
   emit('counts');
 }

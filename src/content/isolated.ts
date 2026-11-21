@@ -296,26 +296,11 @@ declare global { interface Window { __feLensBridge?: boolean } }
         updateBadge();
         reply(true);
         return false;
-      case 'reinspect': {
-        const el = picker.selected();
-        reply(el?.isConnected ? inspect(el) : null);
-        return false;
-      }
-      case 'select:parent': {
-        const el = picker.selected()?.parentElement;
-        if (el && el !== document.documentElement) { picker.select(el); reply(inspect(el)); } else reply(null);
-        return false;
-      }
       case 'select:path': {
         const el = pathToEl(msg.path);
         if (el) { picker.select(el); el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); reply(inspect(el)); } else reply(null);
         return false;
       }
-      case 'selection:clear':
-        picker.clear();
-        state.selection = null;
-        reply(true);
-        return false;
     }
   }
 

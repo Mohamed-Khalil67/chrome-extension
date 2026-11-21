@@ -668,11 +668,6 @@
     flash();
     loop();
   }
-  function clear() {
-    selectedEl = null;
-    endFlash();
-    hideOverlay();
-  }
   var altPick = null;
   var ALT_BLOCKED = ["pointerdown", "pointerup", "mousedown", "mouseup"];
   function altSwallow(e) {
@@ -967,19 +962,6 @@
           updateBadge();
           reply(true);
           return false;
-        case "reinspect": {
-          const el = selected();
-          reply(el?.isConnected ? inspect(el) : null);
-          return false;
-        }
-        case "select:parent": {
-          const el = selected()?.parentElement;
-          if (el && el !== document.documentElement) {
-            select(el);
-            reply(inspect(el));
-          } else reply(null);
-          return false;
-        }
         case "select:path": {
           const el = pathToEl(msg.path);
           if (el) {
@@ -989,11 +971,6 @@
           } else reply(null);
           return false;
         }
-        case "selection:clear":
-          clear();
-          state.selection = null;
-          reply(true);
-          return false;
       }
     }
     let panels = 0;

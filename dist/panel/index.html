@@ -78,11 +78,13 @@
               <button type="button" data-value="log" aria-pressed="false">Logs <span class="n"></span></button>
             </div>
             <div class="toolbar">
+              <input type="search" id="con-q" placeholder="Filter messages" aria-label="Filter console messages">
               <button type="button" class="btn ghost small" id="con-clear" title="Clear (Ctrl+L)">Clear</button>
             </div>
           </div>
           <div id="con-list" class="con-list" role="log" aria-label="Console messages"></div>
           <p class="empty con-empty" id="con-empty"></p>
+          <p class="empty" id="con-nomatch" hidden>Nothing matches this filter.</p>
           <form id="con-form" class="con-form">
             <span class="con-prompt" aria-hidden="true">›</span>
             <textarea id="con-input" rows="1" spellcheck="false" autocomplete="off" aria-label="Run JavaScript in the page" placeholder="Run JavaScript, e.g. document.title"></textarea>
@@ -121,7 +123,7 @@
               <tbody id="net-rows"></tbody>
             </table>
             <span id="net-sort-status" role="status" class="sr-only"></span>
-            <p class="empty" id="net-empty">No API calls yet. Calls your app makes to its backend show up here, with the line of code that made each one.</p>
+            <p class="empty" id="net-empty">No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one.</p>
             <p class="empty" id="net-nomatch" hidden>Nothing matches these filters.</p>
           </div>
           <div id="net-detail" class="net-detail" hidden></div>

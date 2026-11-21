@@ -540,9 +540,10 @@ mark { background: light-dark(#ffe58a, #6b5410); color: inherit; }
 
 /* ── console ── */
 #panel-console { height: 100%; }
-.console { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-columns: minmax(0, 1fr); height: 100%; }
+.console { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto; grid-template-columns: minmax(0, 1fr); height: 100%; }
 .con-bar { padding: 6px 10px 0; background: var(--paper); }
 .con-bar .typebar { margin: 0 0 6px; }
+.con-bar .toolbar { margin-bottom: 6px; }
 .con-list { overflow: auto; font: 12px/1.5 var(--mono); }
 .con-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 3px 10px; border-bottom: 1px solid var(--line); }
 .con-ico { inline-size: 8px; block-size: 8px; margin-top: 5px; border-radius: 50%; }
@@ -563,8 +564,9 @@ mark { background: light-dark(#ffe58a, #6b5410); color: inherit; }
 .l-in .con-ico::before { content: "›"; }
 .l-out .con-ico::before { content: "‹"; }
 .con-code { margin: 0; font: inherit; color: var(--lens); white-space: pre-wrap; }
-.con-empty { padding: 16px 14px; text-align: start; font-size: 12.5px; }
-.con-empty:not([hidden]) + .con-form { border-top: 1px solid var(--line); }
+.con-empty, #con-nomatch { padding: 16px 14px; text-align: start; font-size: 12.5px; }
+/* ~ not +: the hidden sibling between them still counts as the next element. */
+.con-empty:not([hidden]) ~ .con-form, #con-nomatch:not([hidden]) ~ .con-form { border-top: 1px solid var(--line); }
 .con-form { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 6px 10px 8px; background: var(--surface); border-top: 1px solid var(--line); }
 .con-prompt { font: 700 15px/26px var(--mono); color: var(--lens); }
 #con-input { resize: none; font: 12.5px/1.5 var(--mono); padding: 4px 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-s); min-block-size: 28px; }
