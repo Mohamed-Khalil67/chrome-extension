@@ -126,10 +126,28 @@ export interface RuleOut {
 export type CssAnalysis = { box: BoxModel; warnings: LayoutWarning[]; rules: RuleOut[] } | { error: string };
 
 export interface ElementDesc { tag: string; id: string; classes: string[]; attrs: string[]; text: string }
+
+// One element in the DOM tree, as the Inspect tab lists it. `path` is the chain
+// of child indices from <html>, the same shape `select:path` takes.
+export interface DomNode {
+  path: number[];
+  tag: string;
+  id: string;
+  classes: string[];
+  childCount: number;
+  component: string | null; // component that rendered it, when known
+  w: number;
+  h: number;
+}
 export interface Selection {
   element: string;
   elementIsHost: boolean;
   desc: ElementDesc;
+  // <html> → … → the selected element (last), then what sits under and beside it.
+  domPath: DomNode[];
+  domChildren: DomNode[];
+  siblingIndex: number;
+  siblingCount: number;
   framework: FrameworkInfo | null;
   chain: ComponentInfo[];
   listeners: ListenerInfo[];

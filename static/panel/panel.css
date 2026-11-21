@@ -94,11 +94,23 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .btn[data-copied] { color: var(--ok); border-color: var(--ok); }
 
 /* ── settings popover ── */
+/* Anchored under the gear. The plain top/right values below are the fallback:
+   without them an unsupported `position-area` leaves the popover at its static
+   position, which in this grid lands it off-screen. */
+#settings-btn { anchor-name: --gear; }
 .settings {
-  inset: auto; margin: 0; position-area: block-end span-inline-start; position-try-fallbacks: flip-inline;
-  translate: 0 4px; inline-size: min(320px, 92vw); padding: 14px;
+  margin: 0; inset: auto; position: fixed; top: 44px; right: 10px;
+  max-block-size: calc(100dvh - 56px); overflow: auto; overscroll-behavior: contain;
+  inline-size: min(320px, 92vw); padding: 14px;
   border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface); color: var(--ink);
   box-shadow: 0 10px 30px light-dark(rgb(28 34 51 / .16), rgb(0 0 0 / .5));
+}
+@supports (position-area: block-end span-inline-start) {
+  .settings {
+    position-anchor: --gear; top: auto; right: auto;
+    position-area: block-end span-inline-start; position-try-fallbacks: flip-inline;
+    translate: 0 4px;
+  }
 }
 .settings h2 { margin: 0 0 10px; font-size: 14px; }
 .settings label { display: block; font-weight: 550; margin: 10px 0 4px; }
@@ -195,12 +207,46 @@ figure.code .ln.hl .no { color: var(--ink); font-weight: 650; }
 .start p { margin: 0; color: var(--ink-2); max-width: 46ch; }
 .start ul { margin: 0; padding-left: 18px; color: var(--ink-2); }
 
-.el-bar {
-  position: sticky; top: -10px; z-index: 2; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+/* ── element hierarchy ── */
+.dom-tree {
+  position: sticky; top: -10px; z-index: 2;
   margin: -10px -10px 0; padding: 8px 10px; background: var(--paper); border-bottom: 1px solid var(--line);
 }
-.el-bar .tag { font-family: var(--mono); color: var(--bad); font-size: 12.5px; overflow-wrap: anywhere; }
-.el-bar .dim { color: var(--ink-3); }
+.dom-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dom-head h3 { margin: 0; font-size: 13px; }
+.dom-head h3.n-tag { font-family: var(--mono); color: var(--bad); font-size: 12.5px; overflow-wrap: anywhere; }
+.dom-head .dim { color: var(--ink-3); font-size: 12px; }
+.dom-keys { font-size: 11.5px; }
+@media (width < 420px) { .dom-keys { display: none; } }
+
+.dom-list {
+  list-style: none; margin: 6px 0 0; padding: 0;
+  max-block-size: 34dvh; overflow: auto; overscroll-behavior: contain;
+}
+.dom-node {
+  display: flex; align-items: center; gap: 6px; inline-size: 100%;
+  /* Indent by depth, capped so a deep tree still leaves room for the label. */
+  padding: 2px 6px 2px calc(6px + min(var(--d, 0) * 10px, 90px));
+  border: 1px solid transparent; border-radius: var(--radius-s);
+  font: 12.5px var(--mono); text-align: start; color: var(--ink-2);
+  background: transparent; cursor: pointer;
+}
+.dom-node:hover { background: var(--sunken); color: var(--ink); }
+.dom-node .n-tag { color: var(--bad); }
+.dom-node .n-name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dom-node .n-cmp {
+  margin-inline-start: auto; padding: 0 6px; border-radius: 999px;
+  font: 550 11px var(--sans); background: var(--lens-soft); color: var(--lens); white-space: nowrap;
+}
+.dom-node .n-kids { font: 11px var(--sans); color: var(--ink-3); }
+.dom-node .n-cmp + .n-kids { margin-inline-start: 0; }
+.dom-node .n-kids:first-of-type { margin-inline-start: auto; }
+.dom-node.current {
+  background: var(--lens-soft); border-color: color-mix(in oklab, var(--lens) 35%, transparent); color: var(--ink);
+  font-weight: 600;
+}
+.dom-node.child { color: var(--ink-3); }
+.dom-node.child:hover { color: var(--ink); }
 
 .seg { display: inline-flex; gap: 2px; margin: 10px 0 4px; padding: 2px; border-radius: var(--radius-m); background: var(--sunken); }
 .seg [role="tab"] {

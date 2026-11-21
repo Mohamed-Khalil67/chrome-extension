@@ -37,6 +37,13 @@
         <option value="cursor">Cursor</option>
         <option value="webstorm">WebStorm</option>
       </select>
+      <label for="ide-port">IDE port</label>
+      <input id="ide-port" name="idePort" type="number" min="1" max="65535" inputmode="numeric" placeholder="63342">
+      <p class="help">WebStorm's built-in server, <code>63342</code> by default (Settings &rsaquo; Build, Execution, Deployment &rsaquo; Debugger). Turn on <em>Allow unsigned requests</em> there so links open.</p>
+      <div class="row">
+        <button type="button" class="btn ghost small" id="ide-test">Test editor link</button>
+        <span class="saved" id="ide-status" role="status"></span>
+      </div>
       <label for="api-base">API base URL</label>
       <input id="api-base" name="apiBase" type="text" spellcheck="false" autocomplete="off" placeholder="https://api.example.com/">
       <p class="help">Optional. Network lists only calls under this URL (separate several with commas). Leave empty to detect your backend from its JSON responses.</p>
@@ -49,18 +56,18 @@
 
   <div class="tabs">
     <div class="tablist" focusgroup="tablist nomemory" aria-label="Angular Lens views">
-      <button type="button" role="tab" id="tab-inspect" aria-selected="true" focusgroupstart>Inspect</button>
-      <button type="button" role="tab" id="tab-console">Console <span class="count" id="con-count"></span> <span class="count bad" id="con-err"></span></button>
+      <button type="button" role="tab" id="tab-console" aria-selected="true" focusgroupstart>Console <span class="count" id="con-count"></span> <span class="count bad" id="con-err"></span></button>
       <button type="button" role="tab" id="tab-network">Network <span class="count" id="net-count"></span> <span class="count bad" id="net-fail"></span></button>
+      <button type="button" role="tab" id="tab-inspect">Inspect</button>
       <button type="button" role="tab" id="tab-requests">Requests</button>
     </div>
 
     <main class="panels">
-      <section role="tabpanel" id="panel-inspect" aria-labelledby="tab-inspect">
+      <section role="tabpanel" id="panel-inspect" aria-labelledby="tab-inspect" hidden>
         <div class="wrap" id="inspect"></div>
       </section>
 
-      <section role="tabpanel" id="panel-console" aria-labelledby="tab-console" hidden>
+      <section role="tabpanel" id="panel-console" aria-labelledby="tab-console">
         <div class="console">
           <div class="con-bar">
             <div class="typebar" id="con-levels" role="group" aria-label="Filter by level">
@@ -95,6 +102,10 @@
             </section>
             <div class="toolbar">
               <input type="search" id="net-q" placeholder="Filter by URL, status or file" aria-label="Filter API calls">
+              <div class="typebar" id="net-scope" role="group" aria-label="Which calls to list">
+                <button type="button" data-value="api" aria-pressed="true" title="Only calls to your backend">API</button>
+                <button type="button" data-value="all" aria-pressed="false" title="Every fetch and XHR the page made">All</button>
+              </div>
               <label class="toggle"><input type="checkbox" id="net-problems"> Problems only</label>
               <button type="button" class="btn ghost small" id="net-clear">Clear</button>
             </div>

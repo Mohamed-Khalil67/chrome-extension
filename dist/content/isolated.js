@@ -832,15 +832,60 @@
       }
       return n ?? null;
     };
+    const elToPath = (el) => {
+      const path = [];
+      for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+        const parent = n.parentElement;
+        if (!parent) break;
+        path.unshift([...parent.children].indexOf(n));
+      }
+      return path;
+    };
+    function domNode(el, path) {
+      const r = el.getBoundingClientRect();
+      const hover = rpc("hover", el);
+      return {
+        path,
+        tag: el.localName,
+        id: el.id,
+        classes: [...el.classList].filter((c) => !c.startsWith("ng-")),
+        childCount: el.children.length,
+        component: hover?.name ?? null,
+        w: Math.round(r.width),
+        h: Math.round(r.height)
+      };
+    }
+    function domPathOf(path) {
+      const out = [domNode(document.documentElement, [])];
+      let node = document.documentElement;
+      for (const [i, idx] of path.entries()) {
+        const child = node.children[idx];
+        if (!child) break;
+        node = child;
+        out.push(domNode(child, path.slice(0, i + 1)));
+      }
+      return out;
+    }
+    const MAX_CHILDREN = 50;
+    function domChildrenOf(el, path) {
+      return [...el.children].slice(0, MAX_CHILDREN).map((c, i) => domNode(c, [...path, i]));
+    }
     function inspect(el) {
       const fw = rpc("inspect", el) ?? { chain: [] };
       const r = el.getBoundingClientRect();
       const attrs = [...el.attributes].map((a) => a.name).filter((n) => !/^(_ng|ng-|data-felens|class$|style$|id$)/.test(n));
       const ownText = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim())?.textContent?.trim().slice(0, 40) ?? "";
+      const path = elToPath(el);
+      const navigable = pathToEl(path) === el;
+      const siblings = el.parentElement ? [...el.parentElement.children] : [el];
       const sel = {
         element: fw.element ?? el.localName,
         elementIsHost: !!fw.elementIsHost,
         desc: { tag: el.localName, id: el.id, classes: [...el.classList].filter((c) => !c.startsWith("ng-")), attrs, text: ownText },
+        domPath: navigable ? domPathOf(path) : [],
+        domChildren: navigable ? domChildrenOf(el, path) : [],
+        siblingIndex: siblings.indexOf(el),
+        siblingCount: siblings.length,
         framework: fw.framework ?? state.framework,
         chain: fw.chain,
         listeners: fw.listeners ?? [],

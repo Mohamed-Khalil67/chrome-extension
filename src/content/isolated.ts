@@ -3,7 +3,7 @@
 // CSS analysis on request.
 import {
   IN, OUT, PANEL_PORT, readPageEvent,
-  type BadgeMsg, type ErrPayload, type ErrorEntry, type EvalResult, type FrameworkInfo, type InspectResult,
+  type BadgeMsg, type DomNode, type ErrPayload, type ErrorEntry, type EvalResult, type FrameworkInfo, type InspectResult,
   type HoverInfo, type LogMsg, type NetEntry, type PanelEvent, type PanelRequest, type ResponseOf,
   type RuntimeEvent, type Selection, type Snapshot, type PageRequest,
 } from '../shared/messages';
@@ -146,6 +146,50 @@ declare global { interface Window { __feLensBridge?: boolean } }
     return n ?? null;
   };
 
+  // ── the DOM tree around the selected element ──
+  const elToPath = (el: Element): number[] => {
+    const path: number[] = [];
+    for (let n: Element | null = el; n && n !== document.documentElement; n = n.parentElement) {
+      const parent: Element | null = n.parentElement;
+      if (!parent) break;
+      path.unshift([...parent.children].indexOf(n));
+    }
+    return path;
+  };
+
+  function domNode(el: Element, path: number[]): DomNode {
+    const r = el.getBoundingClientRect();
+    const hover = rpc('hover', el) as HoverInfo | null;
+    return {
+      path,
+      tag: el.localName,
+      id: el.id,
+      classes: [...el.classList].filter((c) => !c.startsWith('ng-')),
+      childCount: el.children.length,
+      component: hover?.name ?? null,
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+    };
+  }
+
+  // <html> down to `el`. The path of each ancestor is a prefix of the element's own.
+  function domPathOf(path: number[]): DomNode[] {
+    const out: DomNode[] = [domNode(document.documentElement, [])];
+    let node: Element = document.documentElement;
+    for (const [i, idx] of path.entries()) {
+      const child = node.children[idx];
+      if (!child) break;
+      node = child;
+      out.push(domNode(child, path.slice(0, i + 1)));
+    }
+    return out;
+  }
+
+  const MAX_CHILDREN = 50;
+  function domChildrenOf(el: Element, path: number[]): DomNode[] {
+    return [...el.children].slice(0, MAX_CHILDREN).map((c, i) => domNode(c, [...path, i]));
+  }
+
   function inspect(el: Element): Selection {
     // The page hook answers with an InspectResult (our own code on the other side).
     const fw = (rpc('inspect', el) as InspectResult | null) ?? { chain: [] };
@@ -153,10 +197,20 @@ declare global { interface Window { __feLensBridge?: boolean } }
     // Enough detail to find the element's line in its template.
     const attrs = [...el.attributes].map((a) => a.name).filter((n) => !/^(_ng|ng-|data-felens|class$|style$|id$)/.test(n));
     const ownText = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim())?.textContent?.trim().slice(0, 40) ?? '';
+    const path = elToPath(el);
+    // A path only means something if it leads back to this element. Inside a
+    // shadow root it doesn't (parentElement stops at the boundary), and
+    // navigating it would select some other element: show no tree instead.
+    const navigable = pathToEl(path) === el;
+    const siblings = el.parentElement ? [...el.parentElement.children] : [el];
     const sel: Selection = {
       element: fw.element ?? el.localName,
       elementIsHost: !!fw.elementIsHost,
       desc: { tag: el.localName, id: el.id, classes: [...el.classList].filter((c) => !c.startsWith('ng-')), attrs, text: ownText },
+      domPath: navigable ? domPathOf(path) : [],
+      domChildren: navigable ? domChildrenOf(el, path) : [],
+      siblingIndex: siblings.indexOf(el),
+      siblingCount: siblings.length,
       framework: fw.framework ?? state.framework,
       chain: fw.chain,
       listeners: fw.listeners ?? [],

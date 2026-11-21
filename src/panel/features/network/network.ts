@@ -6,7 +6,7 @@ import { isAppFrame, mapStack, type AppFrame } from '../../../shared/sourcemap';
 import { meaning, shortMeaning } from '../../../shared/status-codes';
 import { emit, on } from '../../core/bus';
 import { codeBlock } from '../../core/code';
-import { $, $$, $maybe, closest, copyText, esc, input } from '../../core/dom';
+import { $, $$, $maybe, chipGroup, closest, copyText, esc, input } from '../../core/dom';
 import { fileLink } from '../../core/editor';
 import { fmtMs, fmtSize, jsonTree } from '../../core/format';
 import { send } from '../../core/rpc';
@@ -20,6 +20,7 @@ const urlOf = (u: string): URL | null => { try { return new URL(u); } catch { re
 const headerVal = (list: Header[] | undefined, name: string): string => list?.find(([k]) => k.toLowerCase() === name)?.[1] ?? '';
 const isJsonResponse = (n: NetEntry): boolean => /json/.test(headerVal(n.resHeaders, 'content-type')) || /^\s*[[{]/.test(n.resBody?.text ?? '');
 const apiBases = (): string[] => S.settings.apiBase.split(',').map((s) => s.trim()).filter(Boolean);
+const isLocal = (host: string): boolean => host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost') || host.endsWith('.test');
 
 // Analytics, tags, ads and error reporters: never your backend.
 const TRACKERS = /(^|\.)(google-analytics|googletagmanager|googleadservices|doubleclick|googlesyndication|clarity|hotjar|facebook|fbcdn|linkedin|licdn|twitter|ads-twitter|tiktok|snapchat|pinterest|segment|mixpanel|amplitude|heap|fullstory|logrocket|sentry|datadoghq|newrelic|nr-data|bugsnag|intercom|hubspot|hs-analytics|hsforms|zdassets|crisp|tawk|cloudflareinsights|posthog)\./i;
@@ -42,7 +43,14 @@ function computeBackendHosts(): void {
   backendHosts = new Set([...counts].filter(([, c]) => c >= Math.max(1, top * 0.3)).map(([h]) => h));
 }
 
+// 'api' keeps the list to backend calls; 'all' lists every fetch/XHR captured.
+let scope: 'api' | 'all' = 'api';
+// True when the API heuristic matched nothing although calls were captured: the
+// list then falls back to showing everything, rather than looking broken.
+let fellBack = false;
+
 export function isBackendCall(n: NetEntry): boolean {
+  if (scope === 'all') return true;
   const bases = apiBases();
   if (bases.length) return bases.some((b) => n.url.startsWith(b));
   const u = urlOf(n.url);
@@ -53,6 +61,10 @@ export function isBackendCall(n: NetEntry): boolean {
   }
   if (TRACKERS.test(u.hostname)) return false;
   if (backendHosts.has(u.host)) return true;
+  // Same machine, different port: `ng serve` on 4200 talking to a dev API on
+  // 8080. Count it from the first call, without waiting for a JSON response.
+  const page = urlOf(S.tabUrl);
+  if (page && isLocal(u.hostname) && isLocal(page.hostname)) return true;
   // Failed or still pending: nothing to learn the host from yet. Count it if it looks like an API call,
   // or if no backend has been identified at all (a backend that is down must still show up).
   const unresolved = n.status == null || n.status === 0 || n.status >= 400;
@@ -204,11 +216,15 @@ export function upsert(n: NetEntry): void {
 // arrive (the busiest host becomes clear), so every refresh checks them all.
 function syncRows(): void {
   computeBackendHosts();
+  // Calls were captured but none looked like a backend call: show them all
+  // instead of an empty table. Without this the tab reads as "nothing works"
+  // when it is really the API heuristic that missed.
+  fellBack = scope === 'api' && S.net.size > 0 && ![...S.net.values()].some(isBackendCall);
+  const show = (n: NetEntry): boolean => fellBack || isBackendCall(n);
   for (const n of S.net.values()) {
-    const show = isBackendCall(n);
     const row = rows.get(n.id);
-    if (show && !row) ensureRow(n);
-    else if (!show && row) { row.remove(); rows.delete(n.id); if (selectedId === n.id) closeDetail(); }
+    if (show(n) && !row) ensureRow(n);
+    else if (!show(n) && row) { row.remove(); rows.delete(n.id); if (selectedId === n.id) closeDetail(); }
   }
 }
 
@@ -310,10 +326,14 @@ function refresh(): void {
   $('#net-bar').innerHTML = STATUS_CLASSES.filter((c) => counts.get(c)).map((c) => `<span class="bar-seg ${c}" style="flex:${(counts.get(c) ?? 0) / sum}" title="${c}: ${counts.get(c) ?? 0}"></span>`).join('');
   const hosts = [...new Set(all.map((n) => urlOf(n.url)?.host ?? ''))].filter(Boolean);
   const failed = all.filter((n) => ['4xx', '5xx', 'failed'].includes(statusClass(n))).length;
+  const what = scope === 'all' ? 'call' : 'API call';
   $('#net-summary').innerHTML = all.length
-    ? `${visible.length === all.length ? '' : `Showing ${visible.length} of ${all.length}. `}${all.length} API call${all.length === 1 ? '' : 's'} to <b>${esc(hosts.slice(0, 2).join(', '))}${hosts.length > 2 ? '…' : ''}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ''}`
+    ? `${visible.length === all.length ? '' : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? '' : 's'} to <b>${esc(hosts.slice(0, 2).join(', '))}${hosts.length > 2 ? '…' : ''}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ''}${fellBack ? ' · <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ''}`
     : '';
   $('#net-empty').hidden = all.length > 0;
+  $('#net-empty').innerHTML = S.net.size === 0
+    ? 'No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one.'
+    : `${S.net.size} call${S.net.size === 1 ? '' : 's'} captured, but none to your backend. Switch to <b>All</b> above to see them.`;
   $('#net-nomatch').hidden = !(all.length && !visible.length);
   emit('counts');
 }
@@ -566,6 +586,11 @@ export function init(): void {
   input('#net-q').addEventListener('input', scheduleRefresh);
   input('#net-problems').addEventListener('change', scheduleRefresh);
   $('#net-clear').addEventListener('click', () => { void send({ type: 'clear:net' }).then(clear); });
+
+  const scopeOf = chipGroup($('#net-scope'), () => {
+    scope = scopeOf()[0] === 'all' ? 'all' : 'api';
+    scheduleRefresh();
+  });
 
   $('#net-codes').addEventListener('click', (e) => {
     if (closest(e, '.codes-reset')) { codeFilter.clear(); scheduleRefresh(); return; }

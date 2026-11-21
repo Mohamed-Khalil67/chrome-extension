@@ -1,9 +1,9 @@
 // Inspect tab: the picked element → its component, code, template line,
 // styles and layout checks, split into sub-tabs.
-import type { BoxModel, CssAnalysis, Selection } from '../../../shared/messages';
+import type { BoxModel, CssAnalysis, DomNode, Selection } from '../../../shared/messages';
 import { emit } from '../../core/bus';
 import { codeBlock, findTemplateLine, snippetHtml, templateFor } from '../../core/code';
-import { $, $$, $maybe, closest, esc } from '../../core/dom';
+import { $, $$, $maybe, closest, copyText, esc } from '../../core/dom';
 import { fileLink } from '../../core/editor';
 import { kvList } from '../../core/format';
 import { send } from '../../core/rpc';
@@ -149,6 +149,80 @@ function layoutHtml(css: CssAnalysis | null): string {
 
 export const layoutWarnings = (): number => warningsOf(S.selection?.css).filter((w) => w.level !== 'info').length;
 
+// ───────────── DOM hierarchy ─────────────
+// <html> down to the selected element, then its children: the whole chain is
+// walkable, so you can move up to a wrapper or down into a child without
+// re-picking on the page.
+function nodeLabel(n: DomNode): string {
+  const id = n.id ? `#${n.id}` : '';
+  const cls = n.classes.length ? `.${n.classes.slice(0, 3).join('.')}${n.classes.length > 3 ? '…' : ''}` : '';
+  return `${n.tag}${id}${cls}`;
+}
+
+function nodeBtn(n: DomNode, depth: number, kind: 'ancestor' | 'current' | 'child'): string {
+  const meta = [
+    n.component ? `<span class="n-cmp">${esc(n.component)}</span>` : '',
+    n.childCount ? `<span class="n-kids">${n.childCount}</span>` : '',
+  ].filter(Boolean).join('');
+  return `<li>
+    <button type="button" class="dom-node ${kind}" data-path="${esc(JSON.stringify(n.path))}"
+      style="--d:${depth}" ${kind === 'current' ? 'aria-current="true"' : ''}
+      title="${esc(nodeLabel(n))} — ${n.w}×${n.h}">
+      <span class="n-tag">${esc(n.tag)}</span><span class="n-name">${esc(nodeLabel(n).slice(n.tag.length))}</span>${meta}
+    </button>
+  </li>`;
+}
+
+function treeHtml(sel: Selection): string {
+  const path = sel.domPath;
+  const current = path.at(-1);
+  // No walkable path (an element inside a shadow root): still say what is selected.
+  if (!current) {
+    return `<section class="dom-tree"><header class="dom-head">
+      <h3 class="n-tag">&lt;${esc(sel.element)}&gt;</h3>
+      <span class="dim">${sel.rect.w}×${sel.rect.h} · inside a shadow root, so the hierarchy can't be walked</span>
+    </header></section>`;
+  }
+  const ancestors = path.slice(0, -1);
+  const kids = sel.domChildren;
+  const sibs = sel.siblingCount > 1 ? `${sel.siblingIndex + 1} of ${sel.siblingCount}` : 'only child';
+  return `
+    <section class="dom-tree" aria-label="Element hierarchy">
+      <header class="dom-head">
+        <h3>Hierarchy</h3>
+        <span class="dim">${esc(sibs)} · ${current.w}×${current.h}</span>
+        <span class="spacer"></span>
+        <span class="dom-keys dim" aria-hidden="true">↑ parent · ↓ child · ← → sibling</span>
+        <button type="button" class="btn tiny ghost" data-act="copy-sel" title="Copy a CSS selector for this element">Copy selector</button>
+        <span class="sr-only" role="status"></span>
+      </header>
+      <ol class="dom-list">
+        ${ancestors.map((n, i) => nodeBtn(n, i, 'ancestor')).join('')}
+        ${nodeBtn(current, ancestors.length, 'current')}
+        ${kids.map((n) => nodeBtn(n, ancestors.length + 1, 'child')).join('')}
+      </ol>
+      ${current.childCount > kids.length ? `<p class="note">Showing the first ${kids.length} of ${current.childCount} children.</p>` : ''}
+    </section>`;
+}
+
+const selectPath = (path: number[]): void => {
+  void send({ type: 'select:path', path }).then((sel) => {
+    setSelection(sel);
+    // render() rebuilt the list: put focus back on the row that is now current,
+    // so arrow keys keep walking the tree.
+    $maybe('.dom-node.current')?.focus();
+  });
+};
+
+// A selector good enough to paste into the console or a test.
+function cssSelectorOf(sel: Selection): string {
+  return sel.domPath.slice(1).map((n) => {
+    if (n.id) return `#${n.id}`;
+    const cls = n.classes.length ? `.${n.classes.join('.')}` : '';
+    return `${n.tag}${cls}`;
+  }).join(' > ');
+}
+
 // ───────────── render ─────────────
 export function render(): void {
   const root = $('#inspect');
@@ -157,14 +231,7 @@ export function render(): void {
   const warnN = warningsOf(sel.css).length;
   const tabs: [SubTab, string][] = [['component', 'Component'], ['styles', 'Styles'], ['layout', `Layout${warnN ? ` <span class="n warn">${warnN}</span>` : ''}`]];
   root.innerHTML = `
-    <div class="el-bar">
-      <span class="tag">&lt;${esc(sel.element)}&gt;</span>
-      <span class="dim">${sel.rect.w}×${sel.rect.h}</span>
-      <span class="spacer"></span>
-      <button type="button" class="btn small ghost" data-act="parent" title="Select the parent element">Parent</button>
-      <button type="button" class="btn small ghost" data-act="refresh" title="Read current values again">Refresh</button>
-      <button type="button" class="btn small ghost" data-act="clear-sel">Clear</button>
-    </div>
+    ${treeHtml(sel)}
     <div class="seg" role="tablist" aria-label="Inspect views">
       ${tabs.map(([k, label]) => `<button type="button" role="tab" data-sub="${k}" aria-selected="${k === subTab}">${label}</button>`).join('')}
     </div>
@@ -186,30 +253,50 @@ export function init(startPick: () => void): void {
   root.addEventListener('click', (e) => {
     const sub = closest(e, '[data-sub]')?.dataset.sub;
     if (isSubTab(sub)) { subTab = sub; render(); return; }
-    const parentBtn = closest(e, '.cmp-parent');
-    if (parentBtn) {
-      const raw: unknown = JSON.parse(parentBtn.dataset.path ?? 'null');
-      if (Array.isArray(raw) && raw.every((x) => typeof x === 'number')) void send({ type: 'select:path', path: raw }).then(setSelection);
+    const node = closest(e, '[data-path]');
+    if (node) {
+      const raw: unknown = JSON.parse(node.dataset.path ?? 'null');
+      if (Array.isArray(raw) && raw.every((x) => typeof x === 'number')) selectPath(raw);
       return;
     }
-    switch (closest(e, '[data-act]')?.dataset.act) {
+    const act = closest<HTMLElement>(e, '[data-act]');
+    switch (act?.dataset.act) {
       case 'pick': startPick(); break;
-      case 'refresh': void send({ type: 'reinspect' }).then(setSelection); break;
-      case 'parent': void send({ type: 'select:parent' }).then(setSelection); break;
-      case 'clear-sel': void send({ type: 'selection:clear' }).then(() => { S.selection = null; render(); }); break;
+      case 'copy-sel': if (S.selection) void copyText(act, cssSelectorOf(S.selection)); break;
       case 'goto-errors': emit('goto-errors'); break;
     }
   });
-  // Arrow keys between the sub-tabs.
+  // Arrow keys: between the sub-tabs, and through the hierarchy.
   root.addEventListener('keydown', (e) => {
     const tab = closest(e, '[data-sub]');
-    if (!tab || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
-    const all = $$('[data-sub]', root);
-    const i = all.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : -1);
-    const next = all[(i + all.length) % all.length]?.dataset.sub;
-    if (!isSubTab(next)) return;
-    subTab = next;
-    render();
-    $maybe(`[data-sub="${subTab}"]`)?.focus();
+    if (tab && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      const all = $$('[data-sub]', root);
+      const i = all.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : -1);
+      const next = all[(i + all.length) % all.length]?.dataset.sub;
+      if (!isSubTab(next)) return;
+      subTab = next;
+      render();
+      $maybe(`[data-sub="${subTab}"]`)?.focus();
+      return;
+    }
+    const sel = S.selection;
+    if (!sel || !closest(e, '.dom-tree')) return;
+    const path = sel.domPath.at(-1)?.path;
+    if (!path) return;
+    const i = path.at(-1);
+    const next = ((): number[] | null => {
+      switch (e.key) {
+        case 'ArrowUp': return path.length ? path.slice(0, -1) : null;
+        case 'ArrowDown': return sel.domChildren[0]?.path ?? null;
+        case 'ArrowLeft': return i != null && i > 0 ? [...path.slice(0, -1), i - 1] : null;
+        case 'ArrowRight': return i != null && i < sel.siblingCount - 1 ? [...path.slice(0, -1), i + 1] : null;
+        default: return null;
+      }
+    })();
+    if (!next) return;
+    e.preventDefault();
+    selectPath(next);
   });
+  // Keep the focused row in view after a move.
+  root.addEventListener('focusin', (e) => { closest(e, '.dom-node')?.scrollIntoView({ block: 'nearest' }); });
 }

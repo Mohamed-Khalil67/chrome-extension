@@ -4,6 +4,7 @@ import { PANEL_PORT, type RuntimeEvent } from '../shared/messages';
 import { clearSourceCache } from '../shared/sourcemap';
 import { emit, on, type TabName } from './core/bus';
 import { $, closest, esc, input } from './core/dom';
+import { DEFAULT_IDE_PORT, openViaIde } from './core/editor';
 import { send } from './core/rpc';
 import { S, type Editor } from './core/state';
 import * as con from './features/console/console';
@@ -55,8 +56,9 @@ $('#health').addEventListener('click', (e) => {
   }
 });
 
-// ───────────── tabs (in Chrome DevTools order) ─────────────
-const TABS: TabName[] = ['inspect', 'console', 'network', 'requests'];
+// ───────────── tabs (left to right, as shown) ─────────────
+const TABS: TabName[] = ['console', 'network', 'inspect', 'requests'];
+const FIRST_TAB: TabName = 'console';
 function selectTab(name: TabName): void {
   for (const t of TABS) {
     const tab = $(`#tab-${t}`), panel = $(`#panel-${t}`);
@@ -70,7 +72,7 @@ function selectTab(name: TabName): void {
 for (const t of TABS) $(`#tab-${t}`).addEventListener('click', () => selectTab(t));
 on('goto-tab', selectTab);
 if (!('focusgroup' in HTMLElement.prototype)) {
-  for (const t of TABS) $(`#tab-${t}`).tabIndex = t === 'inspect' ? 0 : -1;
+  for (const t of TABS) $(`#tab-${t}`).tabIndex = t === FIRST_TAB ? 0 : -1;
   $('.tablist').addEventListener('keydown', (e) => {
     const i = TABS.findIndex((t) => $(`#tab-${t}`) === document.activeElement);
     if (i < 0) return;
@@ -104,26 +106,48 @@ async function loadSettings(): Promise<void> {
   if (typeof settings === 'object' && settings !== null) {
     const root: unknown = Reflect.get(settings, 'root');
     const editor: unknown = Reflect.get(settings, 'editor');
+    const idePort: unknown = Reflect.get(settings, 'idePort');
     const apiBase: unknown = Reflect.get(settings, 'apiBase');
     if (typeof root === 'string') S.settings.root = root;
     if (isEditor(editor)) S.settings.editor = editor;
+    if (typeof idePort === 'number' && idePort > 0) S.settings.idePort = idePort;
     if (typeof apiBase === 'string') S.settings.apiBase = apiBase;
   }
   input('#root').value = S.settings.root;
   $<HTMLSelectElement>('#editor').value = S.settings.editor;
+  input('#ide-port').value = String(S.settings.idePort || DEFAULT_IDE_PORT);
   input('#api-base').value = S.settings.apiBase;
+}
+function readSettingsForm(): void {
+  S.settings.root = input('#root').value.trim();
+  const editor = $<HTMLSelectElement>('#editor').value;
+  if (isEditor(editor)) S.settings.editor = editor;
+  S.settings.idePort = Number(input('#ide-port').value) || DEFAULT_IDE_PORT;
+  S.settings.apiBase = input('#api-base').value.trim();
 }
 $('#settings-form').addEventListener('submit', (e) => {
   e.preventDefault();
   void (async () => {
-    S.settings.root = input('#root').value.trim();
-    const editor = $<HTMLSelectElement>('#editor').value;
-    if (isEditor(editor)) S.settings.editor = editor;
-    S.settings.apiBase = input('#api-base').value.trim();
+    readSettingsForm();
     await chrome.storage.local.set({ settings: S.settings });
     emit('settings-changed');
     $('#saved').textContent = 'Saved';
     setTimeout(() => { $('#saved').textContent = ''; }, 1600);
+  })();
+});
+
+// Does the editor link actually reach the IDE? Says so instead of failing silently.
+$('#ide-test').addEventListener('click', () => {
+  void (async () => {
+    readSettingsForm();
+    const status = $('#ide-status');
+    if (S.settings.editor !== 'webstorm') { status.textContent = `${S.settings.editor} opens through its own URL; no port needed.`; return; }
+    if (!S.settings.root) { status.textContent = 'Set the project folder first.'; return; }
+    status.textContent = 'Checking…';
+    const ok = await openViaIde(`${S.settings.root.replaceAll('\\', '/').replace(/\/$/, '')}/package.json`, 1, 1);
+    status.textContent = ok
+      ? 'WebStorm answered — links will open there.'
+      : `No answer on port ${S.settings.idePort}. Is WebStorm running, with "Allow unsigned requests" on?`;
   })();
 });
 

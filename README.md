@@ -1,12 +1,12 @@
 # Angular Lens
 
-A Chrome side-panel extension for debugging Angular apps. Its tabs follow Chrome DevTools:
+A Chrome side-panel extension for debugging Angular apps:
 
 | Tab | What it tells you |
 |---|---|
-| **Inspect** | Click **Pick**, or hold **Alt** and click any part of the page while you use it. **Component**: the component, its class and **the template line that created the element, shown as code in the panel**, inputs, signals, state and event listeners, and the parent components. **Styles**: box model and the CSS rules that apply (overridden ones struck through). **Layout**: plain-language problems (overflow, hidden, covered, contrast, z-index). |
 | **Console** | Everything the page logs, with **the line of your code that logged it**. **Errors and warnings** are rows you can expand: what the error means, the failing source line, a docs link for `NG0xxx` codes, and the stack. A prompt at the bottom **runs JavaScript in the page** (`await` works, ↑/↓ recall history, Ctrl+L clears). `$0` is the element you picked, and `ng.getOwningComponent($0)` gives its component. |
-| **Network** | **Only the calls your app makes to its backend** (fetch/XHR returning JSON), each with **the file and line that made it** and the component it was called from. At the top, **Responses by status code** explains each code from the backend's side. Click a bar to filter. Click a call for what the backend is saying, what to check in the front end and the backend, the server's own message, then Code, Headers, Payload, Response, Preview and Timing. |
+| **Network** | The calls your app makes to its backend (fetch/XHR), each with **the file and line that made it** and the component it was called from. **API** lists backend calls only, **All** lists every fetch and XHR captured. At the top, **Responses by status code** explains each code from the backend's side. Click a bar to filter. Click a call for what the backend is saying, what to check in the front end and the backend, the server's own message, then Code, Headers, Payload, Response, Preview and Timing. |
+| **Inspect** | Click **Pick**, or hold **Alt** and click any part of the page while you use it. A **Hierarchy** list shows the whole chain from `<html>` down to the element and its children: click any row, or use **↑ ↓ ← →**, to walk the tree without picking again. **Component**: the component, its class and **the template line that created the element, shown as code in the panel**, inputs, signals, state and event listeners, and the parent components. **Styles**: box model and the CSS rules that apply (overridden ones struck through). **Layout**: plain-language problems (overflow, hidden, covered, contrast, z-index). |
 | **Requests** | Build and send an HTTP request (method, params, headers, JSON/form body, bearer/basic/API-key auth, `{{variables}}`) without CORS limits. Copy **TypeScript interfaces** generated from the JSON response (optional fields worked out across array items) and an **Angular service** method. In Network, **Open in Requests** sends any captured call again. |
 
 The header shows a health strip (errors, failed API calls, layout issues) that jumps to the right tab.
@@ -16,7 +16,7 @@ The header shows a health strip (errors, failed API calls, layout issues) that j
 1. Use the built `dist/` folder as it is (it is committed), or rebuild it with `npm install` then `npm run build`.
 2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and select the `dist/` folder.
 3. Open your app (`ng serve` → `http://localhost:4200`), then click the Angular Lens icon to open the side panel.
-4. In ⚙ settings, set **Project folder** (the folder that contains `src/`) so file links open in VS Code, Cursor or WebStorm.
+4. In ⚙ settings, set **Project folder** (the folder that contains `src/`) so file links open in VS Code, Cursor or WebStorm. For WebStorm, links go to its built-in server (port **63342** by default), which needs **Allow unsigned requests** in *Settings › Build, Execution, Deployment › Debugger*. **Test editor link** says whether it answers.
 
 While you work on the extension, `npm run watch` rebuilds on every change. Reload it at `chrome://extensions` afterwards.
 
@@ -33,7 +33,7 @@ Angular Lens runs on `localhost`, `127.0.0.1`, `*.localhost` and `*.test` by def
 
 ## Notes
 
-- **Which calls Network lists.** It finds your backend by itself. Calls to another host that answer with JSON count, as do calls on the app's own host to paths without a file extension (`/api/...`). Static files fetched by code, such as `/assets/i18n/en.json`, are left out. To choose yourself, set **API base URL** in settings.
+- **Which calls Network lists.** On **API** it finds your backend by itself: calls to another host that answer with JSON count, as do another port on the same machine (`ng serve` on 4200 → an API on 8080) and calls on the app's own host to paths without a file extension (`/api/...`). Static files fetched by code, such as `/assets/i18n/en.json`, are left out. If calls were captured but none look like a backend, every call is listed rather than none. **All** always shows the raw capture, and **API base URL** in settings decides it outright.
 - **The line shown for a call** is where it was sent. `HttpClient` sends when the observable is subscribed, so that is usually the component that subscribes, followed by the template event that triggered it. Calls started by Angular itself (`httpResource`, `resource`, `effect`) show "Started by Angular".
 - **Code in the panel** comes from the dev server's source maps (`sourcesContent`), so no file access is needed.
 - **Component names and files** need a development build (`ng serve`). In production builds, Network, Console and the CSS checks still work.

@@ -210,26 +210,13 @@ var S = {
   net: /* @__PURE__ */ new Map(),
   errors: /* @__PURE__ */ new Map(),
   selection: null,
-  settings: { root: "", editor: "vscode", apiBase: "" },
+  settings: { root: "", editor: "vscode", idePort: 63342, apiBase: "" },
   picking: false,
   scripts: []
 };
 
-// src/panel/core/rpc.ts
-async function send(msg) {
-  if (S.tabId == null) return void 0;
-  try {
-    return await chrome.tabs.sendMessage(S.tabId, msg);
-  } catch {
-    return void 0;
-  }
-}
-async function pageScripts(refresh2 = false) {
-  if (refresh2 || !S.scripts.length) S.scripts = await send({ type: "scripts" }) ?? [];
-  return S.scripts;
-}
-
 // src/panel/core/editor.ts
+var DEFAULT_IDE_PORT = 63342;
 function absPath(file) {
   if (/^([a-zA-Z]:[\\/]|\/)/.test(file)) return file.replaceAll("\\", "/");
   if (!S.settings.root) return null;
@@ -248,18 +235,47 @@ function editorUrl(file, line = 1, col = 1) {
       return `vscode://file${slashed}:${line}:${col}`;
   }
 }
+async function openViaIde(path, line, col) {
+  const port2 = S.settings.idePort || DEFAULT_IDE_PORT;
+  const root = `http://127.0.0.1:${port2}/api/file`;
+  const urls = [
+    `${root}/${path}:${line}:${col}`,
+    `${root}?file=${encodeURIComponent(path)}&line=${line}&column=${col}`
+  ];
+  for (const url of urls) {
+    try {
+      const res2 = await fetch(url, { method: "GET", cache: "no-store" });
+      if (res2.ok) return true;
+    } catch {
+    }
+  }
+  return false;
+}
 function fileLink(file, line, col, label) {
   if (!file) return '<span class="file-link nofile">source location unavailable</span>';
   const text = esc(label ?? `${file}${line ? `:${line}` : ""}${col ? `:${col}` : ""}`);
   return `<button type="button" class="file-link" data-open-file="${esc(file)}" data-line="${line ?? 1}" data-col="${col ?? 1}" title="Open ${esc(file)} in your editor">${text}</button>`;
 }
+function needsRoot() {
+  $("#settings").showPopover();
+  $("#root").focus();
+  $("#saved").textContent = "Set your project folder to open files.";
+}
 async function openInEditor(file, line, col) {
+  const path = absPath(file);
+  if (!path) {
+    needsRoot();
+    return;
+  }
+  if (S.settings.editor === "webstorm" && await openViaIde(path, line, col)) return;
   const url = editorUrl(file, line, col);
   if (!url) {
-    $("#settings").showPopover();
-    $("#root").focus();
-    $("#saved").textContent = "Set your project folder to open files.";
+    needsRoot();
     return;
+  }
+  if (S.settings.editor === "webstorm") {
+    $("#settings").showPopover();
+    $("#ide-status").textContent = `No answer from WebStorm on port ${S.settings.idePort || DEFAULT_IDE_PORT}. Trying webstorm:// instead.`;
   }
   if (S.tabId != null) await chrome.tabs.update(S.tabId, { url });
 }
@@ -269,6 +285,20 @@ document.addEventListener("click", (e) => {
   e.stopPropagation();
   void openInEditor(b.dataset.openFile ?? "", Number(b.dataset.line) || 1, Number(b.dataset.col) || 1);
 });
+
+// src/panel/core/rpc.ts
+async function send(msg) {
+  if (S.tabId == null) return void 0;
+  try {
+    return await chrome.tabs.sendMessage(S.tabId, msg);
+  } catch {
+    return void 0;
+  }
+}
+async function pageScripts(refresh2 = false) {
+  if (refresh2 || !S.scripts.length) S.scripts = await send({ type: "scripts" }) ?? [];
+  return S.scripts;
+}
 
 // src/panel/core/format.ts
 var fmtMs = (ms) => ms == null ? "\u2026" : ms >= 1e3 ? `${(ms / 1e3).toFixed(2)} s` : `${Math.round(ms)} ms`;
@@ -835,6 +865,67 @@ function layoutHtml(css) {
   return list2.length ? `<ul class="problems">${list2.map((w) => `<li class="problem ${esc(w.level)}"><strong>${esc(w.text)}</strong><span>${esc(w.hint)}</span></li>`).join("")}</ul>` : '<p class="all-good">No layout problems found on this element.</p>';
 }
 var layoutWarnings = () => warningsOf(S.selection?.css).filter((w) => w.level !== "info").length;
+function nodeLabel(n) {
+  const id = n.id ? `#${n.id}` : "";
+  const cls = n.classes.length ? `.${n.classes.slice(0, 3).join(".")}${n.classes.length > 3 ? "\u2026" : ""}` : "";
+  return `${n.tag}${id}${cls}`;
+}
+function nodeBtn(n, depth, kind) {
+  const meta = [
+    n.component ? `<span class="n-cmp">${esc(n.component)}</span>` : "",
+    n.childCount ? `<span class="n-kids">${n.childCount}</span>` : ""
+  ].filter(Boolean).join("");
+  return `<li>
+    <button type="button" class="dom-node ${kind}" data-path="${esc(JSON.stringify(n.path))}"
+      style="--d:${depth}" ${kind === "current" ? 'aria-current="true"' : ""}
+      title="${esc(nodeLabel(n))} \u2014 ${n.w}\xD7${n.h}">
+      <span class="n-tag">${esc(n.tag)}</span><span class="n-name">${esc(nodeLabel(n).slice(n.tag.length))}</span>${meta}
+    </button>
+  </li>`;
+}
+function treeHtml(sel) {
+  const path = sel.domPath;
+  const current = path.at(-1);
+  if (!current) {
+    return `<section class="dom-tree"><header class="dom-head">
+      <h3 class="n-tag">&lt;${esc(sel.element)}&gt;</h3>
+      <span class="dim">${sel.rect.w}\xD7${sel.rect.h} \xB7 inside a shadow root, so the hierarchy can't be walked</span>
+    </header></section>`;
+  }
+  const ancestors = path.slice(0, -1);
+  const kids = sel.domChildren;
+  const sibs = sel.siblingCount > 1 ? `${sel.siblingIndex + 1} of ${sel.siblingCount}` : "only child";
+  return `
+    <section class="dom-tree" aria-label="Element hierarchy">
+      <header class="dom-head">
+        <h3>Hierarchy</h3>
+        <span class="dim">${esc(sibs)} \xB7 ${current.w}\xD7${current.h}</span>
+        <span class="spacer"></span>
+        <span class="dom-keys dim" aria-hidden="true">\u2191 parent \xB7 \u2193 child \xB7 \u2190 \u2192 sibling</span>
+        <button type="button" class="btn tiny ghost" data-act="copy-sel" title="Copy a CSS selector for this element">Copy selector</button>
+        <span class="sr-only" role="status"></span>
+      </header>
+      <ol class="dom-list">
+        ${ancestors.map((n, i) => nodeBtn(n, i, "ancestor")).join("")}
+        ${nodeBtn(current, ancestors.length, "current")}
+        ${kids.map((n) => nodeBtn(n, ancestors.length + 1, "child")).join("")}
+      </ol>
+      ${current.childCount > kids.length ? `<p class="note">Showing the first ${kids.length} of ${current.childCount} children.</p>` : ""}
+    </section>`;
+}
+var selectPath = (path) => {
+  void send({ type: "select:path", path }).then((sel) => {
+    setSelection(sel);
+    $maybe(".dom-node.current")?.focus();
+  });
+};
+function cssSelectorOf(sel) {
+  return sel.domPath.slice(1).map((n) => {
+    if (n.id) return `#${n.id}`;
+    const cls = n.classes.length ? `.${n.classes.join(".")}` : "";
+    return `${n.tag}${cls}`;
+  }).join(" > ");
+}
 function render() {
   const root = $("#inspect");
   const sel = S.selection;
@@ -846,14 +937,7 @@ function render() {
   const warnN = warningsOf(sel.css).length;
   const tabs = [["component", "Component"], ["styles", "Styles"], ["layout", `Layout${warnN ? ` <span class="n warn">${warnN}</span>` : ""}`]];
   root.innerHTML = `
-    <div class="el-bar">
-      <span class="tag">&lt;${esc(sel.element)}&gt;</span>
-      <span class="dim">${sel.rect.w}\xD7${sel.rect.h}</span>
-      <span class="spacer"></span>
-      <button type="button" class="btn small ghost" data-act="parent" title="Select the parent element">Parent</button>
-      <button type="button" class="btn small ghost" data-act="refresh" title="Read current values again">Refresh</button>
-      <button type="button" class="btn small ghost" data-act="clear-sel">Clear</button>
-    </div>
+    ${treeHtml(sel)}
     <div class="seg" role="tablist" aria-label="Inspect views">
       ${tabs.map(([k, label]) => `<button type="button" role="tab" data-sub="${k}" aria-selected="${k === subTab}">${label}</button>`).join("")}
     </div>
@@ -882,27 +966,19 @@ function init2(startPick2) {
       render();
       return;
     }
-    const parentBtn = closest(e, ".cmp-parent");
-    if (parentBtn) {
-      const raw = JSON.parse(parentBtn.dataset.path ?? "null");
-      if (Array.isArray(raw) && raw.every((x) => typeof x === "number")) void send({ type: "select:path", path: raw }).then(setSelection);
+    const node = closest(e, "[data-path]");
+    if (node) {
+      const raw = JSON.parse(node.dataset.path ?? "null");
+      if (Array.isArray(raw) && raw.every((x) => typeof x === "number")) selectPath(raw);
       return;
     }
-    switch (closest(e, "[data-act]")?.dataset.act) {
+    const act = closest(e, "[data-act]");
+    switch (act?.dataset.act) {
       case "pick":
         startPick2();
         break;
-      case "refresh":
-        void send({ type: "reinspect" }).then(setSelection);
-        break;
-      case "parent":
-        void send({ type: "select:parent" }).then(setSelection);
-        break;
-      case "clear-sel":
-        void send({ type: "selection:clear" }).then(() => {
-          S.selection = null;
-          render();
-        });
+      case "copy-sel":
+        if (S.selection) void copyText(act, cssSelectorOf(S.selection));
         break;
       case "goto-errors":
         emit("goto-errors");
@@ -911,14 +987,41 @@ function init2(startPick2) {
   });
   root.addEventListener("keydown", (e) => {
     const tab = closest(e, "[data-sub]");
-    if (!tab || e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    const all = $$("[data-sub]", root);
-    const i = all.indexOf(tab) + (e.key === "ArrowRight" ? 1 : -1);
-    const next = all[(i + all.length) % all.length]?.dataset.sub;
-    if (!isSubTab(next)) return;
-    subTab = next;
-    render();
-    $maybe(`[data-sub="${subTab}"]`)?.focus();
+    if (tab && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      const all = $$("[data-sub]", root);
+      const i2 = all.indexOf(tab) + (e.key === "ArrowRight" ? 1 : -1);
+      const next2 = all[(i2 + all.length) % all.length]?.dataset.sub;
+      if (!isSubTab(next2)) return;
+      subTab = next2;
+      render();
+      $maybe(`[data-sub="${subTab}"]`)?.focus();
+      return;
+    }
+    const sel = S.selection;
+    if (!sel || !closest(e, ".dom-tree")) return;
+    const path = sel.domPath.at(-1)?.path;
+    if (!path) return;
+    const i = path.at(-1);
+    const next = (() => {
+      switch (e.key) {
+        case "ArrowUp":
+          return path.length ? path.slice(0, -1) : null;
+        case "ArrowDown":
+          return sel.domChildren[0]?.path ?? null;
+        case "ArrowLeft":
+          return i != null && i > 0 ? [...path.slice(0, -1), i - 1] : null;
+        case "ArrowRight":
+          return i != null && i < sel.siblingCount - 1 ? [...path.slice(0, -1), i + 1] : null;
+        default:
+          return null;
+      }
+    })();
+    if (!next) return;
+    e.preventDefault();
+    selectPath(next);
+  });
+  root.addEventListener("focusin", (e) => {
+    closest(e, ".dom-node")?.scrollIntoView({ block: "nearest" });
   });
 }
 
@@ -1010,6 +1113,7 @@ var urlOf = (u) => {
 var headerVal = (list2, name) => list2?.find(([k]) => k.toLowerCase() === name)?.[1] ?? "";
 var isJsonResponse = (n) => /json/.test(headerVal(n.resHeaders, "content-type")) || /^\s*[[{]/.test(n.resBody?.text ?? "");
 var apiBases = () => S.settings.apiBase.split(",").map((s) => s.trim()).filter(Boolean);
+var isLocal = (host) => host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost") || host.endsWith(".test");
 var TRACKERS = /(^|\.)(google-analytics|googletagmanager|googleadservices|doubleclick|googlesyndication|clarity|hotjar|facebook|fbcdn|linkedin|licdn|twitter|ads-twitter|tiktok|snapchat|pinterest|segment|mixpanel|amplitude|heap|fullstory|logrocket|sentry|datadoghq|newrelic|nr-data|bugsnag|intercom|hubspot|hs-analytics|hsforms|zdassets|crisp|tawk|cloudflareinsights|posthog)\./i;
 var looksLikeApiRequest = (n) => !!authHeader(n) || /json/.test(headerVal(n.reqHeaders, "content-type")) || /^\s*[[{]/.test(n.reqBody?.text ?? "");
 var backendHosts = /* @__PURE__ */ new Set();
@@ -1024,7 +1128,10 @@ function computeBackendHosts() {
   const top = Math.max(0, ...counts.values());
   backendHosts = new Set([...counts].filter(([, c]) => c >= Math.max(1, top * 0.3)).map(([h]) => h));
 }
+var scope = "api";
+var fellBack = false;
 function isBackendCall(n) {
+  if (scope === "all") return true;
   const bases = apiBases();
   if (bases.length) return bases.some((b) => n.url.startsWith(b));
   const u = urlOf(n.url);
@@ -1034,6 +1141,8 @@ function isBackendCall(n) {
   }
   if (TRACKERS.test(u.hostname)) return false;
   if (backendHosts.has(u.host)) return true;
+  const page = urlOf(S.tabUrl);
+  if (page && isLocal(u.hostname) && isLocal(page.hostname)) return true;
   const unresolved = n.status == null || n.status === 0 || n.status >= 400;
   return unresolved && (looksLikeApiRequest(n) || backendHosts.size === 0);
 }
@@ -1163,11 +1272,12 @@ function upsert(n) {
 }
 function syncRows() {
   computeBackendHosts();
+  fellBack = scope === "api" && S.net.size > 0 && ![...S.net.values()].some(isBackendCall);
+  const show = (n) => fellBack || isBackendCall(n);
   for (const n of S.net.values()) {
-    const show = isBackendCall(n);
     const row = rows.get(n.id);
-    if (show && !row) ensureRow(n);
-    else if (!show && row) {
+    if (show(n) && !row) ensureRow(n);
+    else if (!show(n) && row) {
       row.remove();
       rows.delete(n.id);
       if (selectedId === n.id) closeDetail();
@@ -1267,8 +1377,10 @@ function refresh() {
   $("#net-bar").innerHTML = STATUS_CLASSES.filter((c) => counts.get(c)).map((c) => `<span class="bar-seg ${c}" style="flex:${(counts.get(c) ?? 0) / sum}" title="${c}: ${counts.get(c) ?? 0}"></span>`).join("");
   const hosts = [...new Set(all.map((n) => urlOf(n.url)?.host ?? ""))].filter(Boolean);
   const failed = all.filter((n) => ["4xx", "5xx", "failed"].includes(statusClass(n))).length;
-  $("#net-summary").innerHTML = all.length ? `${visible.length === all.length ? "" : `Showing ${visible.length} of ${all.length}. `}${all.length} API call${all.length === 1 ? "" : "s"} to <b>${esc(hosts.slice(0, 2).join(", "))}${hosts.length > 2 ? "\u2026" : ""}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ""}` : "";
+  const what = scope === "all" ? "call" : "API call";
+  $("#net-summary").innerHTML = all.length ? `${visible.length === all.length ? "" : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? "" : "s"} to <b>${esc(hosts.slice(0, 2).join(", "))}${hosts.length > 2 ? "\u2026" : ""}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ""}${fellBack ? ' \xB7 <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ""}` : "";
   $("#net-empty").hidden = all.length > 0;
+  $("#net-empty").innerHTML = S.net.size === 0 ? "No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one." : `${S.net.size} call${S.net.size === 1 ? "" : "s"} captured, but none to your backend. Switch to <b>All</b> above to see them.`;
   $("#net-nomatch").hidden = !(all.length && !visible.length);
   emit("counts");
 }
@@ -1495,6 +1607,10 @@ function init3() {
   input("#net-problems").addEventListener("change", scheduleRefresh);
   $("#net-clear").addEventListener("click", () => {
     void send({ type: "clear:net" }).then(clear3);
+  });
+  const scopeOf = chipGroup($("#net-scope"), () => {
+    scope = scopeOf()[0] === "all" ? "all" : "api";
+    scheduleRefresh();
   });
   $("#net-codes").addEventListener("click", (e) => {
     if (closest(e, ".codes-reset")) {
@@ -2255,7 +2371,8 @@ $("#health").addEventListener("click", (e) => {
       break;
   }
 });
-var TABS = ["inspect", "console", "network", "requests"];
+var TABS = ["console", "network", "inspect", "requests"];
+var FIRST_TAB = "console";
 function selectTab(name) {
   for (const t of TABS) {
     const tab = $(`#tab-${t}`), panel = $(`#panel-${t}`);
@@ -2269,7 +2386,7 @@ function selectTab(name) {
 for (const t of TABS) $(`#tab-${t}`).addEventListener("click", () => selectTab(t));
 on("goto-tab", selectTab);
 if (!("focusgroup" in HTMLElement.prototype)) {
-  for (const t of TABS) $(`#tab-${t}`).tabIndex = t === "inspect" ? 0 : -1;
+  for (const t of TABS) $(`#tab-${t}`).tabIndex = t === FIRST_TAB ? 0 : -1;
   $(".tablist").addEventListener("keydown", (e) => {
     const i = TABS.findIndex((t) => $(`#tab-${t}`) === document.activeElement);
     if (i < 0) return;
@@ -2304,28 +2421,52 @@ async function loadSettings() {
   if (typeof settings === "object" && settings !== null) {
     const root = Reflect.get(settings, "root");
     const editor = Reflect.get(settings, "editor");
+    const idePort = Reflect.get(settings, "idePort");
     const apiBase = Reflect.get(settings, "apiBase");
     if (typeof root === "string") S.settings.root = root;
     if (isEditor(editor)) S.settings.editor = editor;
+    if (typeof idePort === "number" && idePort > 0) S.settings.idePort = idePort;
     if (typeof apiBase === "string") S.settings.apiBase = apiBase;
   }
   input("#root").value = S.settings.root;
   $("#editor").value = S.settings.editor;
+  input("#ide-port").value = String(S.settings.idePort || DEFAULT_IDE_PORT);
   input("#api-base").value = S.settings.apiBase;
+}
+function readSettingsForm() {
+  S.settings.root = input("#root").value.trim();
+  const editor = $("#editor").value;
+  if (isEditor(editor)) S.settings.editor = editor;
+  S.settings.idePort = Number(input("#ide-port").value) || DEFAULT_IDE_PORT;
+  S.settings.apiBase = input("#api-base").value.trim();
 }
 $("#settings-form").addEventListener("submit", (e) => {
   e.preventDefault();
   void (async () => {
-    S.settings.root = input("#root").value.trim();
-    const editor = $("#editor").value;
-    if (isEditor(editor)) S.settings.editor = editor;
-    S.settings.apiBase = input("#api-base").value.trim();
+    readSettingsForm();
     await chrome.storage.local.set({ settings: S.settings });
     emit("settings-changed");
     $("#saved").textContent = "Saved";
     setTimeout(() => {
       $("#saved").textContent = "";
     }, 1600);
+  })();
+});
+$("#ide-test").addEventListener("click", () => {
+  void (async () => {
+    readSettingsForm();
+    const status = $("#ide-status");
+    if (S.settings.editor !== "webstorm") {
+      status.textContent = `${S.settings.editor} opens through its own URL; no port needed.`;
+      return;
+    }
+    if (!S.settings.root) {
+      status.textContent = "Set the project folder first.";
+      return;
+    }
+    status.textContent = "Checking\u2026";
+    const ok = await openViaIde(`${S.settings.root.replaceAll("\\", "/").replace(/\/$/, "")}/package.json`, 1, 1);
+    status.textContent = ok ? "WebStorm answered \u2014 links will open there." : `No answer on port ${S.settings.idePort}. Is WebStorm running, with "Allow unsigned requests" on?`;
   })();
 });
 function siteOrigin(url) {
