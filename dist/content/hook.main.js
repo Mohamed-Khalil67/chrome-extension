@@ -147,15 +147,32 @@
         return String(u);
       }
     };
+    const requestLike = (v) => {
+      try {
+        if (typeof v !== "object" || v === null || v instanceof URL) return null;
+        return typeof Reflect.get(v, "url") === "string" ? v : null;
+      } catch {
+        return null;
+      }
+    };
     const origFetch = window.fetch;
     if (typeof origFetch === "function") {
       window.fetch = function feLensFetch(input, init) {
         let url = "", method = "GET", reqHeaders = [], reqBody = null;
+        const req = requestLike(input);
         try {
-          const req = input instanceof Request ? input : null;
-          url = absUrl(input instanceof Request ? input.url : input);
-          method = (init?.method ?? req?.method ?? "GET").toUpperCase();
+          url = absUrl(req ? String(req.url) : input);
+        } catch {
+        }
+        try {
+          method = String(init?.method ?? req?.method ?? "GET").toUpperCase();
+        } catch {
+        }
+        try {
           reqHeaders = headersToList(new Headers(init?.headers ?? req?.headers));
+        } catch {
+        }
+        try {
           reqBody = describeBody(init?.body);
         } catch {
         }
@@ -185,6 +202,84 @@
         );
         return p;
       };
+    }
+    const ssr = { context: "", hydrated: false, state: "", httpCount: 0, replayed: false };
+    const STATE_SEL = 'script[id$="-state"]';
+    function scanSsr() {
+      try {
+        if (!ssr.context) ssr.context = document.querySelector("[ng-server-context]")?.getAttribute("ng-server-context") ?? "";
+        if (!ssr.hydrated && document.querySelector("[ngh]")) ssr.hydrated = true;
+        const raw = document.querySelector(STATE_SEL)?.textContent?.trim();
+        if (raw) ssr.state = raw;
+      } catch {
+      }
+    }
+    function ssrInfo() {
+      const c = ssr.context.toLowerCase();
+      const render = c.includes("ssg") ? "ssg" : c.includes("ssr") ? "ssr" : c ? "server" : "csr";
+      return { render, hydrated: ssr.hydrated, transferHttp: ssr.httpCount };
+    }
+    const pick = (a, b) => a === void 0 ? b : a;
+    const RESPONSE_FIELDS = ["b", "h", "s", "st", "u", "rt"];
+    function isCachedResponse(v) {
+      if (!("b" in v) && !("body" in v)) return false;
+      const hits = RESPONSE_FIELDS.filter((k) => k in v).length;
+      return hits >= 2 || "url" in v || "status" in v;
+    }
+    function replayTransfer() {
+      if (ssr.replayed) return;
+      ssr.replayed = true;
+      scanSsr();
+      if (!ssr.state) return;
+      let json;
+      try {
+        json = JSON.parse(ssr.state);
+      } catch {
+        return;
+      }
+      if (typeof json !== "object" || json === null) return;
+      const at = now();
+      for (const [key, raw] of Object.entries(json)) {
+        if (typeof raw !== "object" || raw === null || !isCachedResponse(raw)) continue;
+        const v = raw;
+        const body = pick(v.b, v.body);
+        const binary = v.rt === "arraybuffer" || v.rt === "blob";
+        const text = binary ? "" : typeof body === "string" ? body : (() => {
+          try {
+            return JSON.stringify(body);
+          } catch {
+            return "";
+          }
+        })();
+        const headerMap = pick(v.h, v.headers) ?? {};
+        const resHeaders = [];
+        for (const [k, val] of Object.entries(headerMap)) {
+          resHeaders.push([k, Array.isArray(val) ? val.join(", ") : String(val)]);
+        }
+        if (!resHeaders.some(([k]) => k.toLowerCase() === "content-type") && /^[[{]/.test(text)) {
+          resHeaders.push(["content-type", "application/json (not stored in the transfer cache)"]);
+        }
+        const url = pick(v.u, v.url);
+        const id = nextId();
+        emit({ type: "net:start", payload: { id, kind: "transfer", url: absUrl(typeof url === "string" && url ? url : `/${key}`), method: "GET", start: at, reqHeaders: [], reqBody: null, initiator: "" } });
+        const resBody = binary ? { text: "", note: `${String(v.rt)} response, stored base64-encoded` } : clip(text);
+        emit({ type: "net:end", payload: { id, status: pick(v.s, v.status) ?? 200, statusText: pick(v.st, v.statusText) ?? "OK", end: at, resHeaders, resBody, size: text.length } });
+        ssr.httpCount++;
+      }
+    }
+    try {
+      const obs = new MutationObserver(() => {
+        scanSsr();
+      });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+      const settle = () => {
+        obs.disconnect();
+        replayTransfer();
+        emit({ type: "framework", payload: framework() });
+      };
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", settle, { once: true });
+      else setTimeout(settle, 0);
+    } catch {
     }
     const xhrInfo = /* @__PURE__ */ new WeakMap();
     const XHR = XMLHttpRequest.prototype;
@@ -499,13 +594,14 @@
     }
     let cachedFw = null;
     const framework = () => {
-      if (cachedFw?.name) return cachedFw;
-      try {
-        cachedFw = detect();
-      } catch {
-        cachedFw = { name: null };
+      if (!cachedFw?.name) {
+        try {
+          cachedFw = detect();
+        } catch {
+          cachedFw = { name: null };
+        }
       }
-      return cachedFw;
+      return { ...cachedFw, ...ssrInfo() };
     };
     function inspect(el, full) {
       let result;

@@ -768,20 +768,28 @@ function hints() {
 // src/panel/features/inspect/inspect.ts
 var subTab = "component";
 var isSubTab = (s) => s === "component" || s === "styles" || s === "layout";
-function startHtml() {
-  const prodNote = S.framework?.name === "Angular" && !S.framework.dev ? "<p><strong>This is a production build.</strong> Run <code>ng serve</code> to see component names, files and code. Styles, network and errors still work.</p>" : "";
-  return `
-    <div class="start">
-      <h2>Find the code behind any part of the page</h2>
-      <p>Press <strong>Pick</strong>, then click an area of the app, or hold <kbd>Alt</kbd> and click it while you use the page. You'll see:</p>
-      <ul>
-        <li>the component that rendered it, with its code and template line</li>
-        <li>its inputs, signals and state right now</li>
-        <li>which CSS rules apply, and any layout problems</li>
-      </ul>
-      ${prodNote}
+var rootState = "idle";
+function ensureRoot() {
+  if (S.selection || rootState !== "idle") return;
+  rootState = "asking";
+  void send({ type: "select:root" }).then((sel) => {
+    rootState = sel ? "idle" : "failed";
+    if (sel) setSelection(sel);
+    else render();
+  });
+}
+function reset() {
+  rootState = "idle";
+}
+function waitingHtml() {
+  if (rootState === "failed") {
+    return `<div class="start">
+      <h2>Not connected to the page</h2>
+      <p>Angular Lens starts with the page. Reload your app, or press <strong>Pick</strong> and click an element.</p>
       <button type="button" class="btn primary" data-act="pick">Pick an element</button>
     </div>`;
+  }
+  return '<p class="note">Reading the page tree\u2026</p>';
 }
 function componentHtml(sel) {
   const [focus, ...parents] = sel.chain;
@@ -952,7 +960,8 @@ function render() {
   const root = $("#inspect");
   const sel = S.selection;
   if (!sel) {
-    root.innerHTML = startHtml();
+    root.innerHTML = waitingHtml();
+    ensureRoot();
     emit("counts");
     return;
   }
@@ -1153,6 +1162,7 @@ function computeBackendHosts() {
 var scope = "api";
 var fellBack = false;
 function isBackendCall(n) {
+  if (n.kind === "transfer") return true;
   if (scope === "all") return true;
   const bases = apiBases();
   if (bases.length) return bases.some((b) => n.url.startsWith(b));
@@ -1254,16 +1264,19 @@ var pathOf = (url) => {
   const u = urlOf(url);
   return u ? u.host + u.pathname : url;
 };
+var isTransfer = (n) => n.kind === "transfer";
 function rowHtml(n) {
   const sc = statusClass(n);
   const tag = problems(n, dupCounts.get(n.id)).find((p) => p.level !== "info");
   const dur = n.end ? n.end - n.start : null;
   const status = n.status == null ? "\u2026" : n.status || (sc === "aborted" ? "\xD7" : "ERR");
+  const site = isTransfer(n) ? '<span class="site none">Fetched on the server while rendering, replayed from the transfer cache</span>' : '<span class="site loading">Finding the call site\u2026</span>';
   return `
     <td class="c-name">
       <button type="button" class="row-open" title="${esc(n.url)}"><span class="nm"><b class="meth m-${esc(n.method.toLowerCase())}">${esc(n.method)}</b> ${esc(nameOf(n.url))}</span><span class="host">${esc(pathOf(n.url))}</span></button>
+      ${isTransfer(n) ? '<span class="tag info" title="Angular fetched this on the server during SSR; the browser made no request">server</span>' : ""}
       ${tag ? `<span class="tag ${tag.level}">${esc(tag.label)}</span>` : ""}
-      <div class="site-line"><span class="site loading">Finding the call site\u2026</span></div>
+      <div class="site-line">${site}</div>
     </td>
     <td class="c-status"><span class="st ${sc}">${status}</span></td>
     <td class="c-time">${fmtMs(dur)}</td>
@@ -1280,6 +1293,7 @@ function ensureRow(n) {
   tr.className = `net-row st-${statusClass(n)}${problems(n, dupCounts.get(n.id)).some((p) => p.level === "error") ? " problem" : ""}`;
   tr.innerHTML = rowHtml(n);
   const row = tr;
+  if (isTransfer(n)) return;
   void callSite(n).then((site) => {
     const line = row.querySelector(".site-line");
     if (line && row.dataset.id === n.id) line.innerHTML = siteHtml(site);
@@ -1399,11 +1413,26 @@ function refresh() {
   $("#net-bar").innerHTML = STATUS_CLASSES.filter((c) => counts.get(c)).map((c) => `<span class="bar-seg ${c}" style="flex:${(counts.get(c) ?? 0) / sum}" title="${c}: ${counts.get(c) ?? 0}"></span>`).join("");
   const hosts = [...new Set(all.map((n) => urlOf(n.url)?.host ?? ""))].filter(Boolean);
   const failed = all.filter((n) => ["4xx", "5xx", "failed"].includes(statusClass(n))).length;
+  const fromServer = all.filter(isTransfer).length;
   const what = scope === "all" ? "call" : "API call";
-  $("#net-summary").innerHTML = all.length ? `${visible.length === all.length ? "" : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? "" : "s"} to <b>${esc(hosts.slice(0, 2).join(", "))}${hosts.length > 2 ? "\u2026" : ""}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ""}${fellBack ? ' \xB7 <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ""}` : "";
+  $("#net-summary").innerHTML = all.length ? `${visible.length === all.length ? "" : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? "" : "s"} to <b>${esc(hosts.slice(0, 2).join(", "))}${hosts.length > 2 ? "\u2026" : ""}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ""}${fromServer ? ` \xB7 <span class="dim">${fromServer} fetched by the server while rendering</span>` : ""}${fellBack ? ' \xB7 <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ""}` : "";
   $("#net-empty").hidden = all.length > 0;
+  $("#net-empty").innerHTML = emptyText();
   $("#net-nomatch").hidden = !(all.length && !visible.length);
   emit("counts");
+}
+function emptyText() {
+  const fw = S.framework;
+  const mode = fw?.render ?? "csr";
+  if (mode === "csr" || !fw?.name) {
+    return "No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one.";
+  }
+  const what = mode === "ssg" ? "prerendered on the server (SSG)" : mode === "ssr" ? "rendered on the server (SSR)" : "rendered on the server";
+  return `<b>Nothing to capture: this page was ${what}.</b>
+    Its data was fetched while the server rendered the HTML${fw.hydrated ? ", and the browser only hydrated what came back" : ""}, so no request left the browser.
+    Angular ships those responses in its transfer cache and they are listed here as <span class="tag info">server</span> rows \u2014 none were found in this page,
+    which means the transfer cache is off, the data is resolved server-side only, or the page was served from a cache.
+    <b>Navigate inside the app</b> (a route change runs HttpClient in the browser) to see client-side calls.`;
 }
 function renderCodes(all) {
   const counts = /* @__PURE__ */ new Map();
@@ -1479,15 +1508,15 @@ async function meaningHtml(n) {
   const msg = serverMessage(n);
   const site = await callSite(n);
   const ah = authHeader(n);
-  const sent = ah ? `Sent with ${ah} header` : "Sent without auth header";
+  const sent = isTransfer(n) ? "Sent by the server" : ah ? `Sent with ${ah} header` : "Sent without auth header";
   const resp = n.status == null ? "Waiting\u2026" : n.status === 0 ? "No response" : `${n.status} ${m.title}`;
   const before = [...S.errors.values()].filter((e) => e.kind !== "http" && e.kind !== "warn" && e.first <= n.start && n.start - e.first < 3e3);
   const isOk = tone === "ok";
   const frontBox = front.length || !isOk && m.front ? `<div class="box"><h3>Check in the front end</h3>${front.map((p) => `<p><strong>${esc(p.label)}.</strong> ${esc(p.hint)}</p>`).join("")}${!isOk && m.front && !(specific && fromStatus) ? `<p>${esc(m.front)}</p>` : ""}</div>` : "";
   return `
     <ol class="facts-strip" aria-label="What happened">
-      <li>${site.at ? esc(`${base(site.at.orig.file)}:${site.at.orig.line}`) : "Started by Angular"}</li>
-      <li class="${!ah && n.status === 401 ? "f-warn" : ""}">${esc(sent)}</li>
+      <li>${isTransfer(n) ? "Server render" : site.at ? esc(`${base(site.at.orig.file)}:${site.at.orig.line}`) : "Started by Angular"}</li>
+      <li class="${!ah && !isTransfer(n) && n.status === 401 ? "f-warn" : ""}">${esc(sent)}</li>
       <li class="f-${tone}">${esc(resp)}</li>
     </ol>
     <div class="meaning ${tone}">
@@ -1501,7 +1530,7 @@ async function meaningHtml(n) {
     ${before.length ? `<div class="box related"><h3>JS errors just before this request</h3>${before.map((e) => `<button type="button" class="link" data-err-key="${esc(e.key)}">${esc(e.message.slice(0, 90))}</button> <span class="note">${fmtMs(n.start - e.first)} earlier</span>`).join("<br>")}</div>` : ""}`;
 }
 function tabsFor(n) {
-  const tabs = [["initiator", "Code"], ["headers", "Headers"]];
+  const tabs = isTransfer(n) ? [["headers", "Headers"]] : [["initiator", "Code"], ["headers", "Headers"]];
   if (n.reqBody) tabs.push(["payload", "Payload"]);
   tabs.push(["response", "Response"]);
   if (parsedJson(n)) tabs.push(["preview", "Preview"]);
@@ -1517,7 +1546,7 @@ async function tabBody(n, tab) {
           <dt>URL</dt><dd>${esc(n.url)}</dd>
           <dt>Method</dt><dd>${esc(n.method)}</dd>
           <dt>Status</dt><dd><span class="st ${statusClass(n)}">${n.status ?? "\u2013"}</span> ${esc(n.statusText ?? "")}${n.error ? ` ${esc(n.error)}` : ""}</dd>
-          <dt>Sent with</dt><dd>${n.kind === "xhr" ? "XMLHttpRequest (HttpClient)" : "fetch"}</dd>
+          <dt>Sent with</dt><dd>${isTransfer(n) ? "Fetched by the server during rendering, then replayed from Angular's transfer cache \u2014 the browser made no request" : n.kind === "xhr" ? "XMLHttpRequest (HttpClient)" : "fetch"}</dd>
         </dl>
         <h4>Response headers</h4>${headerList(n.resHeaders)}<h4>Request headers</h4>${headerList(n.reqHeaders)}`;
     case "payload":
@@ -1585,6 +1614,7 @@ async function renderDetail(id, keepTab = false) {
 function firstTab(n, tabs) {
   const has = (k) => tabs.some(([t]) => t === k);
   if (["4xx", "5xx"].includes(statusClass(n)) && has("response")) return "response";
+  if (isTransfer(n)) return has("preview") ? "preview" : "response";
   return "initiator";
 }
 async function openDetail(id) {
@@ -1727,6 +1757,7 @@ function init3() {
     }
   });
   on("settings-changed", scheduleRefresh);
+  on("framework", scheduleRefresh);
 }
 var openConsoleError = () => {
 };
@@ -2163,7 +2194,7 @@ function syncTop() {
   $("#rq-method").value = req.method;
   $("#rq-url").value = req.url;
 }
-function reset() {
+function reset2() {
   res = null;
   reqTab = "params";
   nameEdited = false;
@@ -2202,7 +2233,7 @@ function loadFrom(n) {
     auth: blankAuth()
   });
   rootName = suggestName(url);
-  reset();
+  reset2();
 }
 async function init4() {
   Object.assign(req, readDraft(await load("req:draft")) ?? blankDraft());
@@ -2238,13 +2269,13 @@ async function init4() {
     if (sel.value !== "" && x) {
       Object.assign(req, copyDraft(x));
       rootName = suggestName(req.url);
-      reset();
+      reset2();
     }
     sel.value = "";
   });
   $("#rq-new").addEventListener("click", () => {
     Object.assign(req, blankDraft());
-    reset();
+    reset2();
   });
   $("#rq-sub").addEventListener("click", (e) => {
     const t = closest(e, "[data-rt]")?.dataset.rt;
@@ -2339,6 +2370,12 @@ async function init4() {
 }
 
 // src/panel/main.ts
+var RENDER_BADGE = {
+  csr: { label: "CSR", title: "Rendered in the browser: every API call happens here and is captured." },
+  ssr: { label: "SSR", title: "Server-side rendered: the first API calls happen on the server. Angular Lens lists what the server put in the transfer cache." },
+  ssg: { label: "SSG", title: "Prerendered at build time: the data was fetched before the browser was involved." },
+  server: { label: "server-rendered", title: "The HTML was rendered on the server." }
+};
 function renderFramework() {
   const fw = S.framework;
   const el = $("#fw");
@@ -2349,7 +2386,10 @@ function renderFramework() {
   const parts = [`<span class="badge lens">${esc(fw.name)} ${esc(fw.version ?? "")}</span>`];
   parts.push(fw.dev ? '<span class="badge">dev</span>' : '<span class="badge warn" title="Production build: component details are not available">prod build</span>');
   if (fw.zoneless) parts.push('<span class="badge">zoneless</span>');
+  const r = RENDER_BADGE[fw.render ?? "csr"];
+  if (r) parts.push(`<span class="badge" title="${esc(r.title)}">${esc(r.label)}${fw.hydrated ? " \xB7 hydrated" : ""}</span>`);
   el.innerHTML = parts.join("");
+  emit("framework");
 }
 function renderCounts() {
   const errN = errorCount();
@@ -2538,6 +2578,7 @@ function resetView() {
   S.selection = null;
   S.framework = null;
   S.scripts = [];
+  reset();
   clear3();
   clear2();
   clear();

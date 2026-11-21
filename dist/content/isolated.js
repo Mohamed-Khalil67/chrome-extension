@@ -962,6 +962,14 @@
           updateBadge();
           reply(true);
           return false;
+        case "select:root": {
+          const el = document.querySelector("[ng-version]") ?? document.body ?? document.documentElement;
+          if (el) {
+            select(el);
+            reply(inspect(el));
+          } else reply(null);
+          return false;
+        }
         case "select:path": {
           const el = pathToEl(msg.path);
           if (el) {

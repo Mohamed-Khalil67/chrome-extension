@@ -14,6 +14,14 @@ import * as network from './features/network/network';
 import * as requests from './features/requests/requests';
 
 // ───────────── framework badge ─────────────
+// How the page was rendered decides what the Network tab can see at all.
+const RENDER_BADGE: Record<string, { label: string; title: string }> = {
+  csr: { label: 'CSR', title: 'Rendered in the browser: every API call happens here and is captured.' },
+  ssr: { label: 'SSR', title: 'Server-side rendered: the first API calls happen on the server. Angular Lens lists what the server put in the transfer cache.' },
+  ssg: { label: 'SSG', title: 'Prerendered at build time: the data was fetched before the browser was involved.' },
+  server: { label: 'server-rendered', title: 'The HTML was rendered on the server.' },
+};
+
 function renderFramework(): void {
   const fw = S.framework;
   const el = $('#fw');
@@ -21,7 +29,10 @@ function renderFramework(): void {
   const parts = [`<span class="badge lens">${esc(fw.name)} ${esc(fw.version ?? '')}</span>`];
   parts.push(fw.dev ? '<span class="badge">dev</span>' : '<span class="badge warn" title="Production build: component details are not available">prod build</span>');
   if (fw.zoneless) parts.push('<span class="badge">zoneless</span>');
+  const r = RENDER_BADGE[fw.render ?? 'csr'];
+  if (r) parts.push(`<span class="badge" title="${esc(r.title)}">${esc(r.label)}${fw.hydrated ? ' · hydrated' : ''}</span>`);
   el.innerHTML = parts.join('');
+  emit('framework');
 }
 
 // ───────────── health strip + tab counts ─────────────
@@ -196,6 +207,7 @@ function enableSite(): void {
 // ───────────── connecting to a tab ─────────────
 function resetView(): void {
   S.selection = null; S.framework = null; S.scripts = [];
+  inspect.reset(); // ask the new page for its root element again
   network.clear();
   con.clear();
   errors.clear();

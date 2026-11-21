@@ -14,22 +14,32 @@ type SubTab = 'component' | 'styles' | 'layout';
 let subTab: SubTab = 'component';
 const isSubTab = (s: string | undefined): s is SubTab => s === 'component' || s === 'styles' || s === 'layout';
 
-// ───────────── empty state ─────────────
-function startHtml(): string {
-  const prodNote = S.framework?.name === 'Angular' && !S.framework.dev
-    ? '<p><strong>This is a production build.</strong> Run <code>ng serve</code> to see component names, files and code. Styles, network and errors still work.</p>' : '';
-  return `
-    <div class="start">
-      <h2>Find the code behind any part of the page</h2>
-      <p>Press <strong>Pick</strong>, then click an area of the app, or hold <kbd>Alt</kbd> and click it while you use the page. You'll see:</p>
-      <ul>
-        <li>the component that rendered it, with its code and template line</li>
-        <li>its inputs, signals and state right now</li>
-        <li>which CSS rules apply, and any layout problems</li>
-      </ul>
-      ${prodNote}
+// ───────────── before anything is picked ─────────────
+// No start screen: the tab opens on the app's root element so the tree is
+// there to walk straight away. Picking just moves the selection.
+let rootState: 'idle' | 'asking' | 'failed' = 'idle';
+
+export function ensureRoot(): void {
+  if (S.selection || rootState !== 'idle') return;
+  rootState = 'asking';
+  void send({ type: 'select:root' }).then((sel) => {
+    rootState = sel ? 'idle' : 'failed';
+    if (sel) setSelection(sel);
+    else render();
+  });
+}
+// A fresh tab (or a reload) asks again.
+export function reset(): void { rootState = 'idle'; }
+
+function waitingHtml(): string {
+  if (rootState === 'failed') {
+    return `<div class="start">
+      <h2>Not connected to the page</h2>
+      <p>Angular Lens starts with the page. Reload your app, or press <strong>Pick</strong> and click an element.</p>
       <button type="button" class="btn primary" data-act="pick">Pick an element</button>
     </div>`;
+  }
+  return '<p class="note">Reading the page tree…</p>';
 }
 
 // ───────────── component sub-tab ─────────────
@@ -227,7 +237,7 @@ function cssSelectorOf(sel: Selection): string {
 export function render(): void {
   const root = $('#inspect');
   const sel = S.selection;
-  if (!sel) { root.innerHTML = startHtml(); emit('counts'); return; }
+  if (!sel) { root.innerHTML = waitingHtml(); ensureRoot(); emit('counts'); return; }
   const warnN = warningsOf(sel.css).length;
   const tabs: [SubTab, string][] = [['component', 'Component'], ['styles', 'Styles'], ['layout', `Layout${warnN ? ` <span class="n warn">${warnN}</span>` : ''}`]];
   root.innerHTML = `

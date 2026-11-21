@@ -5,7 +5,7 @@
 import {
   IN, OUT, readPageRequest,
   type Body, type ComponentInfo, type ErrKind, type ErrPayload, type FrameworkInfo, type Header,
-  type InspectResult, type ListenerInfo, type LogLevel, type PageEvent, type PageRequest, type Val,
+  type InspectResult, type ListenerInfo, type LogLevel, type PageEvent, type PageRequest, type RenderMode, type Val,
 } from '../shared/messages';
 
 // ───────────── Angular's debug API (dev builds only) ─────────────
@@ -154,17 +154,27 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : typeof
     try { return new URL(u, location.href).href; } catch { return String(u); }
   };
 
+  // `input instanceof Request` throws if the page removed the global; read the
+  // fields we need by shape instead.
+  const requestLike = (v: unknown): { url: unknown; method?: unknown; headers?: unknown } | null => {
+    try {
+      if (typeof v !== 'object' || v === null || v instanceof URL) return null;
+      return typeof Reflect.get(v, 'url') === 'string' ? (v as { url: unknown; method?: unknown; headers?: unknown }) : null;
+    } catch { return null; }
+  };
+
   const origFetch = window.fetch;
   if (typeof origFetch === 'function') {
     window.fetch = function feLensFetch(this: unknown, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       let url = '', method = 'GET', reqHeaders: Header[] = [], reqBody: Body | null = null;
-      try {
-        const req = input instanceof Request ? input : null;
-        url = absUrl(input instanceof Request ? input.url : input);
-        method = (init?.method ?? req?.method ?? 'GET').toUpperCase();
-        reqHeaders = headersToList(new Headers(init?.headers ?? req?.headers));
-        reqBody = describeBody(init?.body);
-      } catch { /* fall through */ }
+      // One step at a time: a page that has replaced Request, Headers or URL
+      // (or a body we can't read) must cost at most that one detail, never the
+      // whole row. A single try around all of this used to drop the call.
+      const req = requestLike(input);
+      try { url = absUrl(req ? String(req.url) : (input as string | URL)); } catch { /* keep '' */ }
+      try { method = String(init?.method ?? req?.method ?? 'GET').toUpperCase(); } catch { /* keep GET */ }
+      try { reqHeaders = headersToList(new Headers((init?.headers ?? req?.headers) as HeadersInit | undefined)); } catch { /* keep [] */ }
+      try { reqBody = describeBody(init?.body); } catch { /* keep null */ }
       if (!url || IGNORE_URL.test(url)) return origFetch.call(this, input, init);
 
       const id = nextId();
@@ -193,6 +203,103 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : typeof
       return p;
     };
   }
+
+  // ───────────── server-rendered pages (SSR / SSG) ─────────────
+  // On an SSR or SSG page the API calls happen on the server: the browser makes
+  // none, and a Network tab that only watches fetch/XHR looks broken. Angular
+  // ships those server responses to the browser in a transfer-cache script and
+  // HttpClient replays them, so read that script and list what it holds.
+  //
+  // Read while the HTML is still parsing: Angular strips the `ngh` hydration
+  // attributes once it boots, so looking later would miss them.
+  const ssr = { context: '', hydrated: false, state: '', httpCount: 0, replayed: false };
+  // `<script id="<APP_ID>-state">`, written by the server and read (never
+  // removed) by Angular's retrieveTransferredState.
+  const STATE_SEL = 'script[id$="-state"]';
+
+  function scanSsr(): void {
+    try {
+      if (!ssr.context) ssr.context = document.querySelector('[ng-server-context]')?.getAttribute('ng-server-context') ?? '';
+      if (!ssr.hydrated && document.querySelector('[ngh]')) ssr.hydrated = true;
+      // Always take the latest text: while the HTML streams in, an early read
+      // can catch half of the JSON.
+      const raw = document.querySelector(STATE_SEL)?.textContent?.trim();
+      if (raw) ssr.state = raw;
+    } catch { /* never throw into the page */ }
+  }
+
+  function ssrInfo(): Pick<FrameworkInfo, 'render' | 'hydrated' | 'transferHttp'> {
+    const c = ssr.context.toLowerCase();
+    const render: RenderMode = c.includes('ssg') ? 'ssg' : c.includes('ssr') ? 'ssr' : c ? 'server' : 'csr';
+    return { render, hydrated: ssr.hydrated, transferHttp: ssr.httpCount };
+  }
+
+  // One entry of Angular's HTTP transfer cache. The field names were shortened
+  // in Angular 17.1 (`b`, `h`, `s`, `st`, `u`); accept both spellings.
+  interface CachedResponse {
+    b?: unknown; body?: unknown;
+    h?: Record<string, string[]>; headers?: Record<string, string[]>;
+    s?: number; status?: number;
+    st?: string; statusText?: string;
+    u?: string; url?: string;
+    rt?: string; responseType?: string;
+  }
+  const pick = <A, B>(a: A | undefined, b: B | undefined): A | B | undefined => (a === undefined ? b : a);
+
+  // Identify entries by shape, not by key: the key is an opaque hash whose
+  // format has changed between Angular versions (an "H<number>" string once, a
+  // 64-character hex digest since). Everything else in the script is the app's
+  // own TransferState.
+  const RESPONSE_FIELDS = ['b', 'h', 's', 'st', 'u', 'rt'] as const;
+  function isCachedResponse(v: Record<string, unknown>): boolean {
+    if (!('b' in v) && !('body' in v)) return false;
+    const hits = RESPONSE_FIELDS.filter((k) => k in v).length;
+    return hits >= 2 || 'url' in v || 'status' in v;
+  }
+
+  function replayTransfer(): void {
+    if (ssr.replayed) return;
+    ssr.replayed = true;
+    scanSsr();
+    if (!ssr.state) return;
+    let json: unknown;
+    try { json = JSON.parse(ssr.state); } catch { return; }
+    if (typeof json !== 'object' || json === null) return;
+    const at = now();
+    for (const [key, raw] of Object.entries(json)) {
+      if (typeof raw !== 'object' || raw === null || !isCachedResponse(raw as Record<string, unknown>)) continue;
+      const v = raw as CachedResponse;
+      const body = pick(v.b, v.body);
+      // arraybuffer and blob responses are stored base64-encoded.
+      const binary = v.rt === 'arraybuffer' || v.rt === 'blob';
+      const text = binary ? '' : typeof body === 'string' ? body : (() => { try { return JSON.stringify(body); } catch { return ''; } })();
+      const headerMap = pick(v.h, v.headers) ?? {};
+      const resHeaders: Header[] = [];
+      for (const [k, val] of Object.entries(headerMap)) {
+        resHeaders.push([k, Array.isArray(val) ? val.join(', ') : String(val)]);
+      }
+      // The transfer cache stores no content-type; the Response/Preview tabs
+      // need one to format JSON.
+      if (!resHeaders.some(([k]) => k.toLowerCase() === 'content-type') && /^[[{]/.test(text)) {
+        resHeaders.push(['content-type', 'application/json (not stored in the transfer cache)']);
+      }
+      const url = pick(v.u, v.url);
+      const id = nextId();
+      emit({ type: 'net:start', payload: { id, kind: 'transfer', url: absUrl(typeof url === 'string' && url ? url : `/${key}`), method: 'GET', start: at, reqHeaders: [], reqBody: null, initiator: '' } });
+      const resBody: Body = binary ? { text: '', note: `${String(v.rt)} response, stored base64-encoded` } : clip(text);
+      emit({ type: 'net:end', payload: { id, status: pick(v.s, v.status) ?? 200, statusText: pick(v.st, v.statusText) ?? 'OK', end: at, resHeaders, resBody, size: text.length } });
+      ssr.httpCount++;
+    }
+  }
+
+  // documentElement exists at document_start; its subtree does not yet.
+  try {
+    const obs = new MutationObserver(() => { scanSsr(); });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+    const settle = (): void => { obs.disconnect(); replayTransfer(); emit({ type: 'framework', payload: framework() }); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', settle, { once: true });
+    else setTimeout(settle, 0);
+  } catch { /* never throw into the page */ }
 
   interface XhrInfo { method: string; url: string; reqHeaders: Header[] }
   const xhrInfo = new WeakMap<XMLHttpRequest, XhrInfo>();
@@ -498,10 +605,13 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : typeof
   }
 
   let cachedFw: FrameworkInfo | null = null;
+  // Which framework it is never changes; how the page was rendered is only
+  // known once the HTML has been read, so it is merged in fresh every time.
   const framework = (): FrameworkInfo => {
-    if (cachedFw?.name) return cachedFw;
-    try { cachedFw = detect(); } catch { cachedFw = { name: null }; }
-    return cachedFw;
+    if (!cachedFw?.name) {
+      try { cachedFw = detect(); } catch { cachedFw = { name: null }; }
+    }
+    return { ...cachedFw, ...ssrInfo() };
   };
 
   function inspect(el: Element, full: boolean): InspectResult | { name: string | null; selector: string | null } {

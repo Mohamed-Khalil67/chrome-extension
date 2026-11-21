@@ -23,7 +23,9 @@ export interface Body { text: string; truncated?: boolean; note?: string }
 
 export interface NetStart {
   id: string;
-  kind: 'fetch' | 'xhr';
+  // 'transfer': not a browser request at all — a response Angular fetched on
+  // the server during SSR and replayed from the transfer cache.
+  kind: 'fetch' | 'xhr' | 'transfer';
   url: string;
   method: string;
   start: number;
@@ -67,12 +69,20 @@ export type EvalResult = { ok: true; value: Val } | { ok: false; error: string; 
 export type EvalDone = EvalResult & { id: number };
 
 // ───────────── framework / inspect ─────────────
+// How the page reached the browser. Decides whether the absence of API calls
+// is a bug or the point: an SSR/SSG page fetches on the server.
+export type RenderMode = 'csr' | 'ssr' | 'ssg' | 'server';
 export interface FrameworkInfo {
   name: string | null;
   version?: string;
   dev?: boolean;
   zoneless?: boolean;
   adapter?: string;
+  render?: RenderMode;
+  hydrated?: boolean;
+  // API responses the server put in the transfer cache, replayed by HttpClient
+  // without the browser making a request.
+  transferHttp?: number;
 }
 export interface ComponentInfo {
   framework: string;
@@ -240,6 +250,8 @@ export interface PanelRpc {
   'clear:net': { req: { type: 'clear:net' }; res: boolean };
   'clear:errors': { req: { type: 'clear:errors' }; res: boolean };
   'select:path': { req: { type: 'select:path'; path: number[] }; res: Selection | null };
+  // The app's root element: what the Inspect tab shows before anything is picked.
+  'select:root': { req: { type: 'select:root' }; res: Selection | null };
 }
 export type PanelRequest = PanelRpc[keyof PanelRpc]['req'];
 // The panel keeps a port open to the content script while it is open; Alt+click

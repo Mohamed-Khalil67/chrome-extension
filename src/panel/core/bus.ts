@@ -12,6 +12,8 @@ export interface BusEvents {
   'goto-tab': TabName;
   'goto-errors': undefined;
   'settings-changed': undefined;
+  // The framework badge, including how the page was rendered (CSR/SSR/SSG).
+  framework: undefined;
 }
 type Handler<K extends keyof BusEvents> = (data: BusEvents[K]) => void;
 

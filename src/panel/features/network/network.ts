@@ -50,6 +50,8 @@ let scope: 'api' | 'all' = 'api';
 let fellBack = false;
 
 export function isBackendCall(n: NetEntry): boolean {
+  // Replayed from the server's transfer cache: an API response by definition.
+  if (n.kind === 'transfer') return true;
   if (scope === 'all') return true;
   const bases = apiBases();
   if (bases.length) return bases.some((b) => n.url.startsWith(b));
@@ -171,16 +173,22 @@ const nameOf = (url: string): string => {
 const pathOf = (url: string): string => { const u = urlOf(url); return u ? u.host + u.pathname : url; };
 
 // ───────────── list ─────────────
+const isTransfer = (n: NetEntry): boolean => n.kind === 'transfer';
+
 function rowHtml(n: NetEntry): string {
   const sc = statusClass(n);
   const tag = problems(n, dupCounts.get(n.id)).find((p) => p.level !== 'info');
   const dur = n.end ? n.end - n.start : null;
   const status = n.status == null ? '…' : n.status || (sc === 'aborted' ? '×' : 'ERR');
+  const site = isTransfer(n)
+    ? '<span class="site none">Fetched on the server while rendering, replayed from the transfer cache</span>'
+    : '<span class="site loading">Finding the call site…</span>';
   return `
     <td class="c-name">
       <button type="button" class="row-open" title="${esc(n.url)}"><span class="nm"><b class="meth m-${esc(n.method.toLowerCase())}">${esc(n.method)}</b> ${esc(nameOf(n.url))}</span><span class="host">${esc(pathOf(n.url))}</span></button>
+      ${isTransfer(n) ? '<span class="tag info" title="Angular fetched this on the server during SSR; the browser made no request">server</span>' : ''}
       ${tag ? `<span class="tag ${tag.level}">${esc(tag.label)}</span>` : ''}
-      <div class="site-line"><span class="site loading">Finding the call site…</span></div>
+      <div class="site-line">${site}</div>
     </td>
     <td class="c-status"><span class="st ${sc}">${status}</span></td>
     <td class="c-time">${fmtMs(dur)}</td>
@@ -198,6 +206,7 @@ function ensureRow(n: NetEntry): void {
   tr.className = `net-row st-${statusClass(n)}${problems(n, dupCounts.get(n.id)).some((p) => p.level === 'error') ? ' problem' : ''}`;
   tr.innerHTML = rowHtml(n);
   const row = tr;
+  if (isTransfer(n)) return; // no browser call stack: nothing to map
   void callSite(n).then((site) => {
     const line = row.querySelector('.site-line');
     if (line && row.dataset.id === n.id) line.innerHTML = siteHtml(site);
@@ -326,16 +335,34 @@ function refresh(): void {
   $('#net-bar').innerHTML = STATUS_CLASSES.filter((c) => counts.get(c)).map((c) => `<span class="bar-seg ${c}" style="flex:${(counts.get(c) ?? 0) / sum}" title="${c}: ${counts.get(c) ?? 0}"></span>`).join('');
   const hosts = [...new Set(all.map((n) => urlOf(n.url)?.host ?? ''))].filter(Boolean);
   const failed = all.filter((n) => ['4xx', '5xx', 'failed'].includes(statusClass(n))).length;
+  const fromServer = all.filter(isTransfer).length;
   const what = scope === 'all' ? 'call' : 'API call';
   $('#net-summary').innerHTML = all.length
-    ? `${visible.length === all.length ? '' : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? '' : 's'} to <b>${esc(hosts.slice(0, 2).join(', '))}${hosts.length > 2 ? '…' : ''}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ''}${fellBack ? ' · <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ''}`
+    ? `${visible.length === all.length ? '' : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? '' : 's'} to <b>${esc(hosts.slice(0, 2).join(', '))}${hosts.length > 2 ? '…' : ''}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ''}${fromServer ? ` · <span class="dim">${fromServer} fetched by the server while rendering</span>` : ''}${fellBack ? ' · <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ''}`
     : '';
   // Nothing in the table means nothing was captured at all: when the API
   // heuristic matches none of the captured calls, syncRows lists them all
   // (fellBack) and the summary above says so.
   $('#net-empty').hidden = all.length > 0;
+  $('#net-empty').innerHTML = emptyText();
   $('#net-nomatch').hidden = !(all.length && !visible.length);
   emit('counts');
+}
+
+// An empty Network tab means something different on a server-rendered page: the
+// calls happened on the server, so there was never a browser request to catch.
+function emptyText(): string {
+  const fw = S.framework;
+  const mode = fw?.render ?? 'csr';
+  if (mode === 'csr' || !fw?.name) {
+    return 'No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one.';
+  }
+  const what = mode === 'ssg' ? 'prerendered on the server (SSG)' : mode === 'ssr' ? 'rendered on the server (SSR)' : 'rendered on the server';
+  return `<b>Nothing to capture: this page was ${what}.</b>
+    Its data was fetched while the server rendered the HTML${fw.hydrated ? ', and the browser only hydrated what came back' : ''}, so no request left the browser.
+    Angular ships those responses in its transfer cache and they are listed here as <span class="tag info">server</span> rows — none were found in this page,
+    which means the transfer cache is off, the data is resolved server-side only, or the page was served from a cache.
+    <b>Navigate inside the app</b> (a route change runs HttpClient in the browser) to see client-side calls.`;
 }
 
 // Status-code breakdown: one bar per code the page got, with what it means.
@@ -422,7 +449,7 @@ async function meaningHtml(n: NetEntry): Promise<string> {
 
   const site = await callSite(n);
   const ah = authHeader(n);
-  const sent = ah ? `Sent with ${ah} header` : 'Sent without auth header';
+  const sent = isTransfer(n) ? 'Sent by the server' : ah ? `Sent with ${ah} header` : 'Sent without auth header';
   const resp = n.status == null ? 'Waiting…' : n.status === 0 ? 'No response' : `${n.status} ${m.title}`;
 
   // JS errors in the 3 s before this request started (listed in the Console tab).
@@ -433,8 +460,8 @@ async function meaningHtml(n: NetEntry): Promise<string> {
     : '';
   return `
     <ol class="facts-strip" aria-label="What happened">
-      <li>${site.at ? esc(`${base(site.at.orig.file)}:${site.at.orig.line}`) : 'Started by Angular'}</li>
-      <li class="${!ah && n.status === 401 ? 'f-warn' : ''}">${esc(sent)}</li>
+      <li>${isTransfer(n) ? 'Server render' : site.at ? esc(`${base(site.at.orig.file)}:${site.at.orig.line}`) : 'Started by Angular'}</li>
+      <li class="${!ah && !isTransfer(n) && n.status === 401 ? 'f-warn' : ''}">${esc(sent)}</li>
       <li class="f-${tone}">${esc(resp)}</li>
     </ol>
     <div class="meaning ${tone}">
@@ -449,7 +476,8 @@ async function meaningHtml(n: NetEntry): Promise<string> {
 }
 
 function tabsFor(n: NetEntry): [DetailTab, string][] {
-  const tabs: [DetailTab, string][] = [['initiator', 'Code'], ['headers', 'Headers']];
+  // A transfer-cache entry has no browser call stack, so no Code tab.
+  const tabs: [DetailTab, string][] = isTransfer(n) ? [['headers', 'Headers']] : [['initiator', 'Code'], ['headers', 'Headers']];
   if (n.reqBody) tabs.push(['payload', 'Payload']);
   tabs.push(['response', 'Response']);
   if (parsedJson(n)) tabs.push(['preview', 'Preview']);
@@ -466,7 +494,7 @@ async function tabBody(n: NetEntry, tab: DetailTab): Promise<string> {
           <dt>URL</dt><dd>${esc(n.url)}</dd>
           <dt>Method</dt><dd>${esc(n.method)}</dd>
           <dt>Status</dt><dd><span class="st ${statusClass(n)}">${n.status ?? '–'}</span> ${esc(n.statusText ?? '')}${n.error ? ` ${esc(n.error)}` : ''}</dd>
-          <dt>Sent with</dt><dd>${n.kind === 'xhr' ? 'XMLHttpRequest (HttpClient)' : 'fetch'}</dd>
+          <dt>Sent with</dt><dd>${isTransfer(n) ? "Fetched by the server during rendering, then replayed from Angular's transfer cache — the browser made no request" : n.kind === 'xhr' ? 'XMLHttpRequest (HttpClient)' : 'fetch'}</dd>
         </dl>
         <h4>Response headers</h4>${headerList(n.resHeaders)}<h4>Request headers</h4>${headerList(n.reqHeaders)}`;
     case 'payload':
@@ -538,6 +566,7 @@ async function renderDetail(id: string, keepTab = false): Promise<void> {
 function firstTab(n: NetEntry, tabs: [DetailTab, string][]): DetailTab {
   const has = (k: DetailTab): boolean => tabs.some(([t]) => t === k);
   if (['4xx', '5xx'].includes(statusClass(n)) && has('response')) return 'response';
+  if (isTransfer(n)) return has('preview') ? 'preview' : 'response';
   return 'initiator';
 }
 
@@ -663,6 +692,8 @@ export function init(): void {
 
   // A changed API base URL changes which calls are listed.
   on('settings-changed', scheduleRefresh);
+  // The render mode arrives with the framework badge, after the page loads.
+  on('framework', scheduleRefresh);
 }
 
 let openConsoleError: (key: string) => void = () => {};
