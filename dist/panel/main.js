@@ -1130,7 +1130,6 @@ var SHORT = {
   failed: "Never reached the backend",
   aborted: "Cancelled by the page"
 };
-var shortMeaning = (k) => SHORT[k] ?? meaning(Number(k))?.title ?? "";
 
 // src/panel/features/network/network.ts
 var STATUS_CLASSES = ["2xx", "3xx", "4xx", "5xx", "failed"];
@@ -1163,7 +1162,7 @@ var scope = "api";
 var fellBack = false;
 function isBackendCall(n) {
   if (n.kind === "transfer") return true;
-  if (scope === "all") return true;
+  if (scope !== "api") return true;
   const bases = apiBases();
   if (bases.length) return bases.some((b) => n.url.startsWith(b));
   const u = urlOf(n.url);
@@ -1221,14 +1220,6 @@ function problems(n, dupCount = 0) {
   if (dupCount > 1) add2("warn", `Duplicate \xD7${dupCount}`, "The same request was made several times within 1 second. Check for a double subscribe (async pipe and subscribe on the same observable) or a missing shareReplay.");
   return out;
 }
-function codeKey(n) {
-  if (n.statusText === "aborted") return "aborted";
-  if (n.status === 0) return "failed";
-  return n.status == null ? null : String(n.status);
-}
-var codeTone = (k) => k === "failed" || k.startsWith("5") ? "bad" : k.startsWith("4") ? "warn" : k.startsWith("3") || k === "aborted" ? "info" : "ok";
-var codeOrder = (k) => /^\d/.test(k) ? Number(k) : k === "failed" ? 900 : 901;
-var codeLabel = (k) => k === "failed" ? "ERR" : k === "aborted" ? "\xD7" : k;
 var siteCache = /* @__PURE__ */ new Map();
 function callSite(n) {
   const hit = siteCache.get(n.initiator);
@@ -1250,10 +1241,7 @@ function siteHtml(site) {
 }
 var rows = /* @__PURE__ */ new Map();
 var selectedId = null;
-var sortKey = null;
-var sortDir = "descending";
 var dupCounts = /* @__PURE__ */ new Map();
-var codeFilter = /* @__PURE__ */ new Set();
 var nameOf = (url) => {
   const u = urlOf(url);
   if (!u) return url;
@@ -1270,6 +1258,7 @@ function rowHtml(n) {
   const tag = problems(n, dupCounts.get(n.id)).find((p) => p.level !== "info");
   const dur = n.end ? n.end - n.start : null;
   const status = n.status == null ? "\u2026" : n.status || (sc === "aborted" ? "\xD7" : "ERR");
+  const why = SHORT[n.statusText === "aborted" ? "aborted" : n.status === 0 ? "failed" : String(n.status ?? "")] ?? "";
   const site = isTransfer(n) ? '<span class="site none">Fetched on the server while rendering, replayed from the transfer cache</span>' : '<span class="site loading">Finding the call site\u2026</span>';
   return `
     <td class="c-name">
@@ -1278,7 +1267,7 @@ function rowHtml(n) {
       ${tag ? `<span class="tag ${tag.level}">${esc(tag.label)}</span>` : ""}
       <div class="site-line">${site}</div>
     </td>
-    <td class="c-status"><span class="st ${sc}">${status}</span></td>
+    <td class="c-status"><span class="st ${sc}"${why ? ` title="${esc(why)}"` : ""}>${status}</span></td>
     <td class="c-time">${fmtMs(dur)}</td>
     <td class="c-size">${fmtSize(n.size)}</td>`;
 }
@@ -1356,9 +1345,7 @@ function computeDups() {
 }
 var isProblem = (n) => ["4xx", "5xx", "failed"].includes(statusClass(n)) || problems(n, dupCounts.get(n.id)).some((p) => p.level !== "info");
 function matches(n) {
-  const k = codeKey(n);
-  if (codeFilter.size && (!k || !codeFilter.has(k))) return false;
-  if (input("#net-problems").checked && !isProblem(n)) return false;
+  if (scope === "problems" && !isProblem(n)) return false;
   const q = input("#net-q").value.trim().toLowerCase();
   if (q) {
     const site = rows.get(n.id)?.querySelector(".site-line")?.textContent ?? "";
@@ -1366,12 +1353,6 @@ function matches(n) {
   }
   return true;
 }
-var sortVal = {
-  name: (n) => nameOf(n.url).toLowerCase(),
-  status: (n) => n.status ?? -1,
-  size: (n) => n.size ?? 0,
-  time: (n) => n.end ? n.end - n.start : Infinity
-};
 var raf = 0;
 function scheduleRefresh() {
   cancelAnimationFrame(raf);
@@ -1383,13 +1364,7 @@ function refresh() {
   const all = apiCalls();
   const visible = all.filter(matches);
   const visibleIds = new Set(visible.map((n) => n.id));
-  const key = sortKey ? sortVal[sortKey] : null;
-  visible.sort((a, b) => {
-    if (!key) return b.start - a.start;
-    const x = key(a), y = key(b);
-    const r = x < y ? -1 : x > y ? 1 : 0;
-    return sortDir === "ascending" ? r : -r;
-  });
+  visible.sort((a, b) => b.start - a.start);
   const tbody = $("#net-rows");
   for (const [id, tr] of rows) tr.hidden = !visibleIds.has(id);
   let prev = null;
@@ -1403,7 +1378,6 @@ function refresh() {
     }
     prev = tr;
   }
-  renderCodes(all);
   const counts = new Map(STATUS_CLASSES.map((c) => [c, 0]));
   for (const n of all) {
     const c = statusClass(n);
@@ -1434,27 +1408,8 @@ function emptyText() {
     which means the transfer cache is off, the data is resolved server-side only, or the page was served from a cache.
     <b>Navigate inside the app</b> (a route change runs HttpClient in the browser) to see client-side calls.`;
 }
-function renderCodes(all) {
-  const counts = /* @__PURE__ */ new Map();
-  for (const n of all) {
-    const k = codeKey(n);
-    if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
-  for (const k of codeFilter) if (!counts.has(k)) counts.set(k, 0);
-  const keys = [...counts.keys()].sort((a, b) => codeOrder(a) - codeOrder(b));
-  const max = Math.max(1, ...counts.values());
-  const box = $("#net-codes");
-  box.hidden = !keys.length;
-  $(".codes-list", box).innerHTML = keys.map((k) => `
-    <button type="button" class="code-row t-${codeTone(k)}" data-code="${esc(k)}" aria-pressed="${codeFilter.has(k)}">
-      <span class="code-pill">${esc(codeLabel(k))}</span>
-      <span class="code-mean">${esc(shortMeaning(k))}</span>
-      <span class="code-bar"><span style="inline-size:${(counts.get(k) ?? 0) / max * 100}%"></span></span>
-      <span class="code-n">${counts.get(k) ?? 0}</span>
-    </button>`).join("");
-  $(".codes-reset", box).hidden = !codeFilter.size;
-}
-var detailTab = "headers";
+var isDetailTab = (v) => v === "initiator" || v === "request" || v === "response";
+var detailTab = "request";
 function prettyBody(b, headers) {
   if (!b) return '<p class="note">No body.</p>';
   if (!b.text) return `<p class="note">${esc(b.note ?? "Empty body.")}</p>`;
@@ -1530,43 +1485,34 @@ async function meaningHtml(n) {
     ${before.length ? `<div class="box related"><h3>JS errors just before this request</h3>${before.map((e) => `<button type="button" class="link" data-err-key="${esc(e.key)}">${esc(e.message.slice(0, 90))}</button> <span class="note">${fmtMs(n.start - e.first)} earlier</span>`).join("<br>")}</div>` : ""}`;
 }
 function tabsFor(n) {
-  const tabs = isTransfer(n) ? [["headers", "Headers"]] : [["initiator", "Code"], ["headers", "Headers"]];
-  if (n.reqBody) tabs.push(["payload", "Payload"]);
-  tabs.push(["response", "Response"]);
-  if (parsedJson(n)) tabs.push(["preview", "Preview"]);
-  tabs.push(["timing", "Timing"]);
-  return tabs;
+  const tabs = isTransfer(n) ? [] : [["initiator", "Code"]];
+  return [...tabs, ["request", "Request"], ["response", "Response"]];
 }
 async function tabBody(n, tab) {
   const dur = n.end ? n.end - n.start : null;
   switch (tab) {
-    case "headers":
+    case "request": {
+      const first = Math.min(...apiCalls().map((x) => x.start));
       return `
         <dl class="kv">
           <dt>URL</dt><dd>${esc(n.url)}</dd>
           <dt>Method</dt><dd>${esc(n.method)}</dd>
           <dt>Status</dt><dd><span class="st ${statusClass(n)}">${n.status ?? "\u2013"}</span> ${esc(n.statusText ?? "")}${n.error ? ` ${esc(n.error)}` : ""}</dd>
           <dt>Sent with</dt><dd>${isTransfer(n) ? "Fetched by the server during rendering, then replayed from Angular's transfer cache \u2014 the browser made no request" : n.kind === "xhr" ? "XMLHttpRequest (HttpClient)" : "fetch"}</dd>
+          <dt>Started</dt><dd>${fmtMs(n.start - first)} after the first call</dd>
+          <dt>Took</dt><dd>${fmtMs(dur)}${n.size ? ` \xB7 ${fmtSize(n.size)}` : ""}</dd>
         </dl>
-        <h4>Response headers</h4>${headerList(n.resHeaders)}<h4>Request headers</h4>${headerList(n.reqHeaders)}`;
-    case "payload":
-      return prettyBody(n.reqBody, n.reqHeaders);
-    case "response":
-      return n.status == null ? '<p class="note">Waiting for the response\u2026</p>' : `
-        <input type="search" class="find" placeholder="Find in response" aria-label="Find in response">
-        ${prettyBody(n.resBody, n.resHeaders)}`;
-    case "preview": {
-      const j = parsedJson(n);
-      return j ? `<div class="json">${jsonTree(j.value)}</div>` : "";
+        ${n.reqBody ? `<h4>Body sent</h4>${prettyBody(n.reqBody, n.reqHeaders)}` : ""}
+        <h4>Request headers</h4>${headerList(n.reqHeaders)}`;
     }
-    case "timing": {
-      const first = Math.min(...apiCalls().map((x) => x.start));
+    case "response": {
+      if (n.status == null) return '<p class="note">Waiting for the response\u2026</p>';
+      const j = parsedJson(n);
       return `
-        <dl class="kv">
-          <dt>Started</dt><dd>${fmtMs(n.start - first)} after the first API call</dd>
-          <dt>Duration</dt><dd>${fmtMs(dur)}</dd>
-          <dt>Size</dt><dd>${fmtSize(n.size)}</dd>
-        </dl>`;
+        ${j ? `<div class="json">${jsonTree(j.value)}</div>` : `
+        <input type="search" class="find" placeholder="Find in response" aria-label="Find in response">
+        ${prettyBody(n.resBody, n.resHeaders)}`}
+        <h4>Response headers</h4>${headerList(n.resHeaders)}`;
     }
     case "initiator": {
       const frames = (await mapStack(n.initiator, 400)).filter(isAppFrame);
@@ -1612,10 +1558,8 @@ async function renderDetail(id, keepTab = false) {
     </div>`;
 }
 function firstTab(n, tabs) {
-  const has = (k) => tabs.some(([t]) => t === k);
-  if (["4xx", "5xx"].includes(statusClass(n)) && has("response")) return "response";
-  if (isTransfer(n)) return has("preview") ? "preview" : "response";
-  return "initiator";
+  if (["4xx", "5xx", "failed"].includes(statusClass(n))) return "response";
+  return tabs.some(([t]) => t === "initiator") ? "initiator" : "response";
 }
 async function openDetail(id) {
   selectedId = id;
@@ -1655,43 +1599,19 @@ function asFetch(n) {
 }
 function init3() {
   input("#net-q").addEventListener("input", scheduleRefresh);
-  input("#net-problems").addEventListener("change", scheduleRefresh);
   $("#net-clear").addEventListener("click", () => {
     void send({ type: "clear:net" }).then(clear3);
   });
-  const scopeOf = chipGroup($("#net-scope"), () => {
-    scope = scopeOf()[0] === "all" ? "all" : "api";
+  const filterOf = chipGroup($("#net-filter"), () => {
+    const v = filterOf()[0];
+    scope = v === "all" || v === "problems" ? v : "api";
     scheduleRefresh();
   });
-  $("#net-codes").addEventListener("click", (e) => {
-    if (closest(e, ".codes-reset")) {
-      codeFilter.clear();
-      scheduleRefresh();
-      return;
-    }
-    const k = closest(e, "[data-code]")?.dataset.code;
-    if (!k) return;
-    if (codeFilter.has(k)) codeFilter.delete(k);
-    else codeFilter.add(k);
-    scheduleRefresh();
-  });
-  $("#net-table thead").addEventListener("click", (e) => {
-    const b = closest(e, "button[data-sort]");
-    const th = b?.closest("th");
-    const k = b?.dataset.sort;
-    if (!b || !th || !(k === "name" || k === "status" || k === "size" || k === "time")) return;
-    if (sortKey === k && sortDir === "descending") {
-      sortKey = null;
-      th.removeAttribute("aria-sort");
-    } else {
-      sortDir = sortKey === k ? "descending" : "ascending";
-      sortKey = k;
-      for (const x of $$("#net-table th")) x.removeAttribute("aria-sort");
-      th.setAttribute("aria-sort", sortDir);
-    }
-    $("#net-sort-status").textContent = sortKey ? `Sorted by ${b.textContent?.trim() ?? sortKey}, ${sortDir}` : "Newest first";
-    scheduleRefresh();
-  });
+  const tools = $(".net-tools");
+  const listView = $("#net-list-view");
+  new ResizeObserver(() => {
+    listView.style.setProperty("--tools-h", `${Math.round(tools.getBoundingClientRect().height)}px`);
+  }).observe(tools);
   $("#net-rows").addEventListener("click", (e) => {
     if (closest(e, ".file-link")) return;
     const id = closest(e, "tr[data-id]")?.dataset.id;
@@ -1717,7 +1637,7 @@ function init3() {
     }
     const tab = closest(e, "[data-tab]");
     const t = tab?.dataset.tab;
-    if (tab && (t === "headers" || t === "payload" || t === "response" || t === "preview" || t === "timing" || t === "initiator")) {
+    if (tab && isDetailTab(t)) {
       detailTab = t;
       for (const x of $$("[data-tab]", detail)) x.setAttribute("aria-selected", String(x === tab));
       void tabBody(n, t).then((html) => {
@@ -1767,8 +1687,8 @@ function onOpenError(fn) {
 var failedCount = () => apiCalls().filter((n) => ["4xx", "5xx", "failed"].includes(statusClass(n))).length;
 var apiCount = () => rows.size;
 function showProblems() {
-  codeFilter.clear();
-  input("#net-problems").checked = true;
+  scope = "problems";
+  setChip($("#net-filter"), "problems");
   scheduleRefresh();
 }
 

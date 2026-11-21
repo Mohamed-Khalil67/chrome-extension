@@ -3,10 +3,10 @@
 // explains what each code means from the backend's side, and works as a filter.
 import type { Body, Header, NetEntry } from '../../../shared/messages';
 import { isAppFrame, mapStack, type AppFrame } from '../../../shared/sourcemap';
-import { meaning, shortMeaning } from '../../../shared/status-codes';
+import { SHORT, meaning } from '../../../shared/status-codes';
 import { emit, on } from '../../core/bus';
 import { codeBlock } from '../../core/code';
-import { $, $$, $maybe, chipGroup, closest, copyText, esc, input } from '../../core/dom';
+import { $, $$, $maybe, chipGroup, closest, copyText, esc, input, setChip } from '../../core/dom';
 import { fileLink } from '../../core/editor';
 import { fmtMs, fmtSize, jsonTree } from '../../core/format';
 import { send } from '../../core/rpc';
@@ -43,8 +43,10 @@ function computeBackendHosts(): void {
   backendHosts = new Set([...counts].filter(([, c]) => c >= Math.max(1, top * 0.3)).map(([h]) => h));
 }
 
-// 'api' keeps the list to backend calls; 'all' lists every fetch/XHR captured.
-let scope: 'api' | 'all' = 'api';
+// One control instead of three: 'api' keeps the list to backend calls, 'all'
+// lists every fetch/XHR captured, 'problems' only what failed or looks wrong.
+type Filter = 'api' | 'all' | 'problems';
+let scope: Filter = 'api';
 // True when the API heuristic matched nothing although calls were captured: the
 // list then falls back to showing everything, rather than looking broken.
 let fellBack = false;
@@ -52,7 +54,7 @@ let fellBack = false;
 export function isBackendCall(n: NetEntry): boolean {
   // Replayed from the server's transfer cache: an API response by definition.
   if (n.kind === 'transfer') return true;
-  if (scope === 'all') return true;
+  if (scope !== 'api') return true;
   const bases = apiBases();
   if (bases.length) return bases.some((b) => n.url.startsWith(b));
   const u = urlOf(n.url);
@@ -119,16 +121,6 @@ export function problems(n: NetEntry, dupCount = 0): Problem[] {
   return out;
 }
 
-// The bucket a row belongs to in the status-code breakdown.
-function codeKey(n: NetEntry): string | null {
-  if (n.statusText === 'aborted') return 'aborted';
-  if (n.status === 0) return 'failed';
-  return n.status == null ? null : String(n.status);
-}
-const codeTone = (k: string): string => (k === 'failed' || k.startsWith('5') ? 'bad' : k.startsWith('4') ? 'warn' : k.startsWith('3') || k === 'aborted' ? 'info' : 'ok');
-const codeOrder = (k: string): number => (/^\d/.test(k) ? Number(k) : k === 'failed' ? 900 : 901);
-const codeLabel = (k: string): string => (k === 'failed' ? 'ERR' : k === 'aborted' ? '×' : k);
-
 // ───────────── where in your code each call was made ─────────────
 interface CallSite { at: AppFrame | null; from: AppFrame | null }
 const siteCache = new Map<string, Promise<CallSite>>();
@@ -158,11 +150,7 @@ function siteHtml(site: CallSite): string {
 // ───────────── state ─────────────
 const rows = new Map<string, HTMLTableRowElement>();
 let selectedId: string | null = null;
-type SortKey = 'name' | 'status' | 'size' | 'time';
-let sortKey: SortKey | null = null; // null → newest first
-let sortDir: 'ascending' | 'descending' = 'descending';
 let dupCounts = new Map<string, number>();
-const codeFilter = new Set<string>();
 
 const nameOf = (url: string): string => {
   const u = urlOf(url);
@@ -180,6 +168,7 @@ function rowHtml(n: NetEntry): string {
   const tag = problems(n, dupCounts.get(n.id)).find((p) => p.level !== 'info');
   const dur = n.end ? n.end - n.start : null;
   const status = n.status == null ? '…' : n.status || (sc === 'aborted' ? '×' : 'ERR');
+  const why = SHORT[n.statusText === 'aborted' ? 'aborted' : n.status === 0 ? 'failed' : String(n.status ?? '')] ?? '';
   const site = isTransfer(n)
     ? '<span class="site none">Fetched on the server while rendering, replayed from the transfer cache</span>'
     : '<span class="site loading">Finding the call site…</span>';
@@ -190,7 +179,7 @@ function rowHtml(n: NetEntry): string {
       ${tag ? `<span class="tag ${tag.level}">${esc(tag.label)}</span>` : ''}
       <div class="site-line">${site}</div>
     </td>
-    <td class="c-status"><span class="st ${sc}">${status}</span></td>
+    <td class="c-status"><span class="st ${sc}"${why ? ` title="${esc(why)}"` : ''}>${status}</span></td>
     <td class="c-time">${fmtMs(dur)}</td>
     <td class="c-size">${fmtSize(n.size)}</td>`;
 }
@@ -276,9 +265,7 @@ const isProblem = (n: NetEntry): boolean =>
   ['4xx', '5xx', 'failed'].includes(statusClass(n)) || problems(n, dupCounts.get(n.id)).some((p) => p.level !== 'info');
 
 function matches(n: NetEntry): boolean {
-  const k = codeKey(n);
-  if (codeFilter.size && (!k || !codeFilter.has(k))) return false;
-  if (input('#net-problems').checked && !isProblem(n)) return false;
+  if (scope === 'problems' && !isProblem(n)) return false;
   const q = input('#net-q').value.trim().toLowerCase();
   if (q) {
     const site = rows.get(n.id)?.querySelector('.site-line')?.textContent ?? '';
@@ -286,13 +273,6 @@ function matches(n: NetEntry): boolean {
   }
   return true;
 }
-
-const sortVal: Record<SortKey, (n: NetEntry) => string | number> = {
-  name: (n) => nameOf(n.url).toLowerCase(),
-  status: (n) => n.status ?? -1,
-  size: (n) => n.size ?? 0,
-  time: (n) => (n.end ? n.end - n.start : Infinity),
-};
 
 let raf = 0;
 export function scheduleRefresh(): void {
@@ -307,14 +287,8 @@ function refresh(): void {
   const visible = all.filter(matches);
   const visibleIds = new Set(visible.map((n) => n.id));
 
-  // Order: move existing rows (never rebuild the tbody).
-  const key = sortKey ? sortVal[sortKey] : null;
-  visible.sort((a, b) => {
-    if (!key) return b.start - a.start;
-    const x = key(a), y = key(b);
-    const r = x < y ? -1 : x > y ? 1 : 0;
-    return sortDir === 'ascending' ? r : -r;
-  });
+  // Newest first: the call you just triggered is the one you are looking at.
+  visible.sort((a, b) => b.start - a.start);
   const tbody = $('#net-rows');
   for (const [id, tr] of rows) tr.hidden = !visibleIds.has(id);
   let prev: HTMLTableRowElement | null = null;
@@ -325,8 +299,6 @@ function refresh(): void {
     if (want !== tr) { if (prev) prev.after(tr); else tbody.prepend(tr); }
     prev = tr;
   }
-
-  renderCodes(all);
 
   // Summary + status bar.
   const counts = new Map<StatusClass, number>(STATUS_CLASSES.map((c) => [c, 0]));
@@ -365,32 +337,11 @@ function emptyText(): string {
     <b>Navigate inside the app</b> (a route change runs HttpClient in the browser) to see client-side calls.`;
 }
 
-// Status-code breakdown: one bar per code the page got, with what it means.
-// Clicking a row filters the list.
-function renderCodes(all: NetEntry[]): void {
-  const counts = new Map<string, number>();
-  for (const n of all) {
-    const k = codeKey(n);
-    if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
-  }
-  for (const k of codeFilter) if (!counts.has(k)) counts.set(k, 0);
-  const keys = [...counts.keys()].sort((a, b) => codeOrder(a) - codeOrder(b));
-  const max = Math.max(1, ...counts.values());
-  const box = $('#net-codes');
-  box.hidden = !keys.length;
-  $('.codes-list', box).innerHTML = keys.map((k) => `
-    <button type="button" class="code-row t-${codeTone(k)}" data-code="${esc(k)}" aria-pressed="${codeFilter.has(k)}">
-      <span class="code-pill">${esc(codeLabel(k))}</span>
-      <span class="code-mean">${esc(shortMeaning(k))}</span>
-      <span class="code-bar"><span style="inline-size:${((counts.get(k) ?? 0) / max) * 100}%"></span></span>
-      <span class="code-n">${counts.get(k) ?? 0}</span>
-    </button>`).join('');
-  $('.codes-reset', box).hidden = !codeFilter.size;
-}
-
 // ───────────── detail (drill-down over the list) ─────────────
-type DetailTab = 'headers' | 'payload' | 'response' | 'preview' | 'timing' | 'initiator';
-let detailTab: DetailTab = 'headers';
+// Three tabs, not six: the code that made the call, what went out, what came back.
+type DetailTab = 'initiator' | 'request' | 'response';
+const isDetailTab = (v: string | undefined): v is DetailTab => v === 'initiator' || v === 'request' || v === 'response';
+let detailTab: DetailTab = 'request';
 
 function prettyBody(b: Body | null | undefined, headers: Header[] | undefined): string {
   if (!b) return '<p class="note">No body.</p>';
@@ -477,44 +428,35 @@ async function meaningHtml(n: NetEntry): Promise<string> {
 
 function tabsFor(n: NetEntry): [DetailTab, string][] {
   // A transfer-cache entry has no browser call stack, so no Code tab.
-  const tabs: [DetailTab, string][] = isTransfer(n) ? [['headers', 'Headers']] : [['initiator', 'Code'], ['headers', 'Headers']];
-  if (n.reqBody) tabs.push(['payload', 'Payload']);
-  tabs.push(['response', 'Response']);
-  if (parsedJson(n)) tabs.push(['preview', 'Preview']);
-  tabs.push(['timing', 'Timing']);
-  return tabs;
+  const tabs: [DetailTab, string][] = isTransfer(n) ? [] : [['initiator', 'Code']];
+  return [...tabs, ['request', 'Request'], ['response', 'Response']];
 }
 
 async function tabBody(n: NetEntry, tab: DetailTab): Promise<string> {
   const dur = n.end ? n.end - n.start : null;
   switch (tab) {
-    case 'headers':
+    case 'request': {
+      const first = Math.min(...apiCalls().map((x) => x.start));
       return `
         <dl class="kv">
           <dt>URL</dt><dd>${esc(n.url)}</dd>
           <dt>Method</dt><dd>${esc(n.method)}</dd>
           <dt>Status</dt><dd><span class="st ${statusClass(n)}">${n.status ?? '–'}</span> ${esc(n.statusText ?? '')}${n.error ? ` ${esc(n.error)}` : ''}</dd>
           <dt>Sent with</dt><dd>${isTransfer(n) ? "Fetched by the server during rendering, then replayed from Angular's transfer cache — the browser made no request" : n.kind === 'xhr' ? 'XMLHttpRequest (HttpClient)' : 'fetch'}</dd>
+          <dt>Started</dt><dd>${fmtMs(n.start - first)} after the first call</dd>
+          <dt>Took</dt><dd>${fmtMs(dur)}${n.size ? ` · ${fmtSize(n.size)}` : ''}</dd>
         </dl>
-        <h4>Response headers</h4>${headerList(n.resHeaders)}<h4>Request headers</h4>${headerList(n.reqHeaders)}`;
-    case 'payload':
-      return prettyBody(n.reqBody, n.reqHeaders);
-    case 'response':
-      return n.status == null ? '<p class="note">Waiting for the response…</p>' : `
-        <input type="search" class="find" placeholder="Find in response" aria-label="Find in response">
-        ${prettyBody(n.resBody, n.resHeaders)}`;
-    case 'preview': {
-      const j = parsedJson(n);
-      return j ? `<div class="json">${jsonTree(j.value)}</div>` : '';
+        ${n.reqBody ? `<h4>Body sent</h4>${prettyBody(n.reqBody, n.reqHeaders)}` : ''}
+        <h4>Request headers</h4>${headerList(n.reqHeaders)}`;
     }
-    case 'timing': {
-      const first = Math.min(...apiCalls().map((x) => x.start));
+    case 'response': {
+      if (n.status == null) return '<p class="note">Waiting for the response…</p>';
+      const j = parsedJson(n);
       return `
-        <dl class="kv">
-          <dt>Started</dt><dd>${fmtMs(n.start - first)} after the first API call</dd>
-          <dt>Duration</dt><dd>${fmtMs(dur)}</dd>
-          <dt>Size</dt><dd>${fmtSize(n.size)}</dd>
-        </dl>`;
+        ${j ? `<div class="json">${jsonTree(j.value)}</div>` : `
+        <input type="search" class="find" placeholder="Find in response" aria-label="Find in response">
+        ${prettyBody(n.resBody, n.resHeaders)}`}
+        <h4>Response headers</h4>${headerList(n.resHeaders)}`;
     }
     case 'initiator': {
       const frames = (await mapStack(n.initiator, 400)).filter(isAppFrame);
@@ -564,10 +506,9 @@ async function renderDetail(id: string, keepTab = false): Promise<void> {
 
 // Open the most useful tab first: Response for failures, the code otherwise.
 function firstTab(n: NetEntry, tabs: [DetailTab, string][]): DetailTab {
-  const has = (k: DetailTab): boolean => tabs.some(([t]) => t === k);
-  if (['4xx', '5xx'].includes(statusClass(n)) && has('response')) return 'response';
-  if (isTransfer(n)) return has('preview') ? 'preview' : 'response';
-  return 'initiator';
+  // A failure explains itself in the response; otherwise the code is the point.
+  if (['4xx', '5xx', 'failed'].includes(statusClass(n))) return 'response';
+  return tabs.some(([t]) => t === 'initiator') ? 'initiator' : 'response';
 }
 
 export async function openDetail(id: string): Promise<void> {
@@ -613,37 +554,19 @@ function asFetch(n: NetEntry): string {
 // ───────────── wiring ─────────────
 export function init(): void {
   input('#net-q').addEventListener('input', scheduleRefresh);
-  input('#net-problems').addEventListener('change', scheduleRefresh);
   $('#net-clear').addEventListener('click', () => { void send({ type: 'clear:net' }).then(clear); });
 
-  const scopeOf = chipGroup($('#net-scope'), () => {
-    scope = scopeOf()[0] === 'all' ? 'all' : 'api';
+  const filterOf = chipGroup($('#net-filter'), () => {
+    const v = filterOf()[0];
+    scope = v === 'all' || v === 'problems' ? v : 'api';
     scheduleRefresh();
   });
 
-  $('#net-codes').addEventListener('click', (e) => {
-    if (closest(e, '.codes-reset')) { codeFilter.clear(); scheduleRefresh(); return; }
-    const k = closest(e, '[data-code]')?.dataset.code;
-    if (!k) return;
-    if (codeFilter.has(k)) codeFilter.delete(k); else codeFilter.add(k);
-    scheduleRefresh();
-  });
-
-  // Sortable headers (buttons inside <th>, aria-sort on the active one only).
-  $('#net-table thead').addEventListener('click', (e) => {
-    const b = closest(e, 'button[data-sort]');
-    const th = b?.closest('th');
-    const k = b?.dataset.sort;
-    if (!b || !th || !(k === 'name' || k === 'status' || k === 'size' || k === 'time')) return;
-    if (sortKey === k && sortDir === 'descending') { sortKey = null; th.removeAttribute('aria-sort'); } else {
-      sortDir = sortKey === k ? 'descending' : 'ascending';
-      sortKey = k;
-      for (const x of $$('#net-table th')) x.removeAttribute('aria-sort');
-      th.setAttribute('aria-sort', sortDir);
-    }
-    $('#net-sort-status').textContent = sortKey ? `Sorted by ${b.textContent?.trim() ?? sortKey}, ${sortDir}` : 'Newest first';
-    scheduleRefresh();
-  });
+  // Measure the sticky filter row so the table head can sit exactly under it:
+  // the row wraps at narrow widths, so its height isn't a constant.
+  const tools = $('.net-tools');
+  const listView = $('#net-list-view');
+  new ResizeObserver(() => { listView.style.setProperty('--tools-h', `${Math.round(tools.getBoundingClientRect().height)}px`); }).observe(tools);
 
   $('#net-rows').addEventListener('click', (e) => {
     if (closest(e, '.file-link')) return; // opens the editor instead
@@ -661,7 +584,7 @@ export function init(): void {
     if (errKey) { openConsoleError(errKey); return; }
     const tab = closest(e, '[data-tab]');
     const t = tab?.dataset.tab;
-    if (tab && (t === 'headers' || t === 'payload' || t === 'response' || t === 'preview' || t === 'timing' || t === 'initiator')) {
+    if (tab && isDetailTab(t)) {
       detailTab = t;
       for (const x of $$('[data-tab]', detail)) x.setAttribute('aria-selected', String(x === tab));
       void tabBody(n, t).then((html) => { $('.tab-body', detail).innerHTML = html; });
@@ -702,8 +625,9 @@ export function onOpenError(fn: (key: string) => void): void { openConsoleError 
 // For the health strip.
 export const failedCount = (): number => apiCalls().filter((n) => ['4xx', '5xx', 'failed'].includes(statusClass(n))).length;
 export const apiCount = (): number => rows.size;
+// From the health strip: show what is broken.
 export function showProblems(): void {
-  codeFilter.clear();
-  input('#net-problems').checked = true;
+  scope = 'problems';
+  setChip($('#net-filter'), 'problems');
   scheduleRefresh();
 }

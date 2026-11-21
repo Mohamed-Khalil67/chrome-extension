@@ -98,31 +98,25 @@
           <div id="net-list-view" class="wrap">
             <p class="net-summary" id="net-summary"></p>
             <div class="statbar" id="net-bar" aria-hidden="true"></div>
-            <section class="codes" id="net-codes" aria-labelledby="codes-h" hidden>
-              <header><h2 id="codes-h">Responses by status code</h2><button type="button" class="btn ghost small codes-reset" hidden>Show all</button></header>
-              <div class="codes-list" role="group" aria-label="Filter by status code"></div>
-            </section>
-            <div class="toolbar">
-              <input type="search" id="net-q" placeholder="Filter by URL, status or file" aria-label="Filter API calls">
-              <div class="typebar" id="net-scope" role="group" aria-label="Which calls to list">
-                <button type="button" data-value="api" aria-pressed="true" title="Only calls to your backend">API</button>
+            <div class="toolbar net-tools">
+              <input type="search" id="net-q" placeholder="Filter by URL, status or file" aria-label="Filter calls">
+              <div class="typebar" id="net-filter" role="group" aria-label="Which calls to list">
+                <button type="button" data-value="api" aria-pressed="true" title="Calls to your backend">API</button>
                 <button type="button" data-value="all" aria-pressed="false" title="Every fetch and XHR the page made">All</button>
+                <button type="button" data-value="problems" aria-pressed="false" title="Only calls that failed or look wrong">Problems</button>
               </div>
-              <label class="toggle"><input type="checkbox" id="net-problems"> Problems only</label>
               <button type="button" class="btn ghost small" id="net-clear">Clear</button>
             </div>
             <table class="net-table api" id="net-table">
               <thead>
                 <tr>
-                  <th scope="col" class="c-name"><button type="button" data-sort="name">API call and where it's made<span class="sort-ico" aria-hidden="true"></span></button></th>
-                  <th scope="col" class="c-status"><button type="button" data-sort="status">Status<span class="sort-ico" aria-hidden="true"></span></button></th>
-                  <th scope="col" class="c-time"><button type="button" data-sort="time">Time<span class="sort-ico" aria-hidden="true"></span></button></th>
-                  <th scope="col" class="c-size"><button type="button" data-sort="size">Size<span class="sort-ico" aria-hidden="true"></span></button></th>
+                  <th scope="col" class="c-name">Call and where it's made</th>
+                  <th scope="col" class="c-status">Status</th>
+                  <th scope="col" class="c-time">Time</th>
                 </tr>
               </thead>
               <tbody id="net-rows"></tbody>
             </table>
-            <span id="net-sort-status" role="status" class="sr-only"></span>
             <p class="empty" id="net-empty">No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one.</p>
             <p class="empty" id="net-nomatch" hidden>Nothing matches these filters.</p>
           </div>

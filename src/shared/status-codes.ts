@@ -52,7 +52,7 @@ export function meaning(status: number | undefined, statusText?: string): Meanin
   return CODES[status] ?? CLASS_FALLBACK[String(status)[0] ?? ''] ?? { title: `Status ${status}`, backend: '' };
 }
 
-// Short version for the status-code breakdown at the top of the list.
+// Plain English for a status code, shown when you hover one in the list.
 export const SHORT: Record<string, string> = {
   200: 'Backend sent the data', 201: 'Saved', 202: 'Queued', 204: 'Done, no body', 206: 'Part of a file',
   301: 'Moved for good', 302: 'Redirected', 304: 'Served from cache', 307: 'Redirected', 308: 'Moved for good',
@@ -62,4 +62,3 @@ export const SHORT: Record<string, string> = {
   500: 'Backend code crashed', 502: 'Proxy got no answer', 503: 'Backend down', 504: 'Backend too slow',
   failed: 'Never reached the backend', aborted: 'Cancelled by the page',
 };
-export const shortMeaning = (k: string): string => SHORT[k] ?? meaning(Number(k))?.title ?? '';
