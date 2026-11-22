@@ -62,7 +62,12 @@ function needsRoot(): void {
 
 export async function openInEditor(file: string, line: number, col: number): Promise<void> {
   const path = absPath(file);
-  if (!path) { needsRoot(); return; }
+  if (!path) {
+    // WebStorm resolves a path relative to the project it has open, so no folder is needed.
+    if (S.settings.editor === 'webstorm' && await openViaIde(file.replace(/^\.?\//, ''), line, col)) return;
+    needsRoot();
+    return;
+  }
   if (S.settings.editor === 'webstorm' && await openViaIde(path, line, col)) return;
   const url = editorUrl(file, line, col);
   if (!url) { needsRoot(); return; }

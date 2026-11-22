@@ -210,7 +210,7 @@ var S = {
   net: /* @__PURE__ */ new Map(),
   errors: /* @__PURE__ */ new Map(),
   selection: null,
-  settings: { root: "", editor: "vscode", idePort: 63342, apiBase: "" },
+  settings: { root: "", roots: {}, editor: "vscode", idePort: 63342, apiBase: "" },
   picking: false,
   scripts: []
 };
@@ -267,6 +267,7 @@ function needsRoot() {
 async function openInEditor(file, line, col) {
   const path = absPath(file);
   if (!path) {
+    if (S.settings.editor === "webstorm" && await openViaIde(file.replace(/^\.?\//, ""), line, col)) return;
     needsRoot();
     return;
   }
@@ -405,7 +406,7 @@ function snippetHtml(file, text, line, { before = 3, after = 3, tone = "focus", 
   const canGrow = from > 1 || to < lines.length;
   return `
     <figure class="code" data-file="${esc(file)}" data-line="${line}" data-tone="${tone}" data-before="${before}" data-after="${after}">
-      <figcaption>${fileLink(file, line, null, label)}${canGrow ? `<button type="button" class="btn tiny ghost" data-grow>${before >= 20 ? "Show less" : "Show more"}</button>` : ""}</figcaption>
+      <figcaption>${fileLink(file, line, null, label)}<button type="button" class="btn tiny primary" data-open-file="${esc(file)}" data-line="${line}" data-col="1" title="Open ${esc(file)}:${line} in your editor">Open in editor</button>${canGrow ? `<button type="button" class="btn tiny ghost" data-grow>${before >= 20 ? "Show less" : "Show more"}</button>` : ""}</figcaption>
       <div class="lines" role="region" aria-label="Source of ${esc(file)} around line ${line}" tabindex="0">${rows2.join("")}</div>
     </figure>`;
 }
@@ -895,6 +896,7 @@ function layoutHtml(css) {
   return list2.length ? `<ul class="problems">${list2.map((w) => `<li class="problem ${esc(w.level)}"><strong>${esc(w.text)}</strong><span>${esc(w.hint)}</span></li>`).join("")}</ul>` : '<p class="all-good">No layout problems found on this element.</p>';
 }
 var layoutWarnings = () => warningsOf(S.selection?.css).filter((w) => w.level !== "info").length;
+var treeOpen = false;
 function nodeLabel(n) {
   const id = n.id ? `#${n.id}` : "";
   const cls = n.classes.length ? `.${n.classes.slice(0, 3).join(".")}${n.classes.length > 3 ? "\u2026" : ""}` : "";
@@ -925,11 +927,15 @@ function treeHtml(sel) {
   const ancestors = path.slice(0, -1);
   const kids = sel.domChildren;
   const sibs = sel.siblingCount > 1 ? `${sel.siblingIndex + 1} of ${sel.siblingCount}` : "only child";
+  const crumbs = ancestors.slice(-2).map((n) => esc(nodeLabel(n)));
   return `
-    <section class="dom-tree" aria-label="Element hierarchy">
+    <details class="dom-tree"${treeOpen ? " open" : ""}>
+      <summary class="dom-sum" title="Show the element hierarchy">
+        <span class="crumbs">${crumbs.length ? `<span class="anc">${ancestors.length > 2 ? "\u2026 \u203A " : ""}${crumbs.join(" \u203A ")} \u203A</span>` : ""}<b class="cur">${esc(nodeLabel(current))}</b></span>
+        <span class="dim">${current.w}\xD7${current.h}</span>
+      </summary>
       <header class="dom-head">
-        <h3>Hierarchy</h3>
-        <span class="dim">${esc(sibs)} \xB7 ${current.w}\xD7${current.h}</span>
+        <span class="dim">${esc(sibs)}</span>
         <span class="spacer"></span>
         <span class="dom-keys dim" aria-hidden="true">\u2191 parent \xB7 \u2193 child \xB7 \u2190 \u2192 sibling</span>
         <button type="button" class="btn tiny ghost" data-act="copy-sel" title="Copy a CSS selector for this element">Copy selector</button>
@@ -941,7 +947,7 @@ function treeHtml(sel) {
         ${kids.map((n) => nodeBtn(n, ancestors.length + 1, "child")).join("")}
       </ol>
       ${current.childCount > kids.length ? `<p class="note">Showing the first ${kids.length} of ${current.childCount} children.</p>` : ""}
-    </section>`;
+    </details>`;
 }
 var selectPath = (path) => {
   void send({ type: "select:path", path }).then((sel) => {
@@ -1051,6 +1057,9 @@ function init2(startPick2) {
     e.preventDefault();
     selectPath(next);
   });
+  root.addEventListener("toggle", (e) => {
+    if (e.target instanceof HTMLDetailsElement && e.target.matches(".dom-tree")) treeOpen = e.target.open;
+  }, true);
   root.addEventListener("focusin", (e) => {
     closest(e, ".dom-node")?.scrollIntoView({ block: "nearest" });
   });
@@ -1132,7 +1141,6 @@ var SHORT = {
 };
 
 // src/panel/features/network/network.ts
-var STATUS_CLASSES = ["2xx", "3xx", "4xx", "5xx", "failed"];
 var urlOf = (u) => {
   try {
     return new URL(u);
@@ -1378,18 +1386,9 @@ function refresh() {
     }
     prev = tr;
   }
-  const counts = new Map(STATUS_CLASSES.map((c) => [c, 0]));
-  for (const n of all) {
-    const c = statusClass(n);
-    counts.set(c, (counts.get(c) ?? 0) + 1);
-  }
-  const sum = STATUS_CLASSES.reduce((a, c) => a + (counts.get(c) ?? 0), 0) || 1;
-  $("#net-bar").innerHTML = STATUS_CLASSES.filter((c) => counts.get(c)).map((c) => `<span class="bar-seg ${c}" style="flex:${(counts.get(c) ?? 0) / sum}" title="${c}: ${counts.get(c) ?? 0}"></span>`).join("");
-  const hosts = [...new Set(all.map((n) => urlOf(n.url)?.host ?? ""))].filter(Boolean);
-  const failed = all.filter((n) => ["4xx", "5xx", "failed"].includes(statusClass(n))).length;
-  const fromServer = all.filter(isTransfer).length;
-  const what = scope === "all" ? "call" : "API call";
-  $("#net-summary").innerHTML = all.length ? `${visible.length === all.length ? "" : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? "" : "s"} to <b>${esc(hosts.slice(0, 2).join(", "))}${hosts.length > 2 ? "\u2026" : ""}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ""}${fromServer ? ` \xB7 <span class="dim">${fromServer} fetched by the server while rendering</span>` : ""}${fellBack ? ' \xB7 <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ""}` : "";
+  const note = scope === "problems" ? `Showing failed calls only. <button type="button" class="link" data-act="show-api">Show all API calls</button>` : fellBack ? "None of these calls matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down." : "";
+  $("#net-summary").innerHTML = note;
+  $("#net-summary").hidden = !note;
   $("#net-empty").hidden = all.length > 0;
   $("#net-empty").innerHTML = emptyText();
   $("#net-nomatch").hidden = !(all.length && !visible.length);
@@ -1448,7 +1447,7 @@ function serverMessage(n) {
     const m = /<pre[^>]*>([\s\S]{1,300}?)<\/pre>/i.exec(t) ?? /<h1[^>]*>([\s\S]{1,200}?)<\/h1>/i.exec(t) ?? /<title>([\s\S]{1,200}?)<\/title>/i.exec(t);
     return m?.[1] ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
   }
-  return t.length < 200 ? t : "";
+  return t.length < 200 && !/^(\{\s*\}|\[\s*\])$/.test(t) ? t : "";
 }
 async function meaningHtml(n) {
   const m = meaning(n.status, n.statusText);
@@ -1467,6 +1466,7 @@ async function meaningHtml(n) {
   const resp = n.status == null ? "Waiting\u2026" : n.status === 0 ? "No response" : `${n.status} ${m.title}`;
   const before = [...S.errors.values()].filter((e) => e.kind !== "http" && e.kind !== "warn" && e.first <= n.start && n.start - e.first < 3e3);
   const isOk = tone === "ok";
+  const quiet = isOk && !front.length && !msg && !before.length;
   const frontBox = front.length || !isOk && m.front ? `<div class="box"><h3>Check in the front end</h3>${front.map((p) => `<p><strong>${esc(p.label)}.</strong> ${esc(p.hint)}</p>`).join("")}${!isOk && m.front && !(specific && fromStatus) ? `<p>${esc(m.front)}</p>` : ""}</div>` : "";
   return `
     <ol class="facts-strip" aria-label="What happened">
@@ -1474,12 +1474,12 @@ async function meaningHtml(n) {
       <li class="${!ah && !isTransfer(n) && n.status === 401 ? "f-warn" : ""}">${esc(sent)}</li>
       <li class="f-${tone}">${esc(resp)}</li>
     </ol>
-    <div class="meaning ${tone}">
+    ${quiet ? "" : `<div class="meaning ${tone}">
       <p class="m-title"><span class="st pill ${sc}">${n.status ?? "\u2026"}</span> ${esc(m.title)}</p>
       <h3>What the backend is saying</h3>
       <p>${esc(m.backend)}</p>
       ${msg ? `<p class="server-msg"><span>Server message</span> <code>${esc(msg)}</code></p>` : ""}
-    </div>
+    </div>`}
     ${frontBox}
     ${!isOk && m.back ? `<div class="box"><h3>Check in the backend</h3><p>${esc(m.back)}</p></div>` : ""}
     ${before.length ? `<div class="box related"><h3>JS errors just before this request</h3>${before.map((e) => `<button type="button" class="link" data-err-key="${esc(e.key)}">${esc(e.message.slice(0, 90))}</button> <span class="note">${fmtMs(n.start - e.first)} earlier</span>`).join("<br>")}</div>` : ""}`;
@@ -1551,7 +1551,6 @@ async function renderDetail(id, keepTab = false) {
       <div class="actions">
         <button type="button" class="btn small" data-act="to-requests">Open in Requests</button>
         <button type="button" class="btn small" data-copy="curl">Copy as cURL</button>
-        <button type="button" class="btn small" data-copy="fetch">Copy as fetch</button>
         <button type="button" class="btn small" data-copy="response">Copy response</button>
         <span role="status" class="saved"></span>
       </div>
@@ -1607,11 +1606,12 @@ function init3() {
     scope = v === "all" || v === "problems" ? v : "api";
     scheduleRefresh();
   });
-  const tools = $(".net-tools");
-  const listView = $("#net-list-view");
-  new ResizeObserver(() => {
-    listView.style.setProperty("--tools-h", `${Math.round(tools.getBoundingClientRect().height)}px`);
-  }).observe(tools);
+  $("#net-summary").addEventListener("click", (e) => {
+    if (!closest(e, '[data-act="show-api"]')) return;
+    scope = "api";
+    setChip($("#net-filter"), "api");
+    scheduleRefresh();
+  });
   $("#net-rows").addEventListener("click", (e) => {
     if (closest(e, ".file-link")) return;
     const id = closest(e, "tr[data-id]")?.dataset.id;
@@ -2396,6 +2396,23 @@ function setPicking(onState) {
 $("#pick").addEventListener("click", () => {
   void startPick();
 });
+var legacyRoot = "";
+function siteKey() {
+  try {
+    return new URL(S.tabUrl).origin;
+  } catch {
+    return "";
+  }
+}
+function applySiteRoot() {
+  const k = siteKey();
+  S.settings.root = S.settings.roots[k] ?? (Object.keys(S.settings.roots).length ? "" : legacyRoot);
+  input("#root").value = S.settings.root;
+}
+var showIdeFields = () => {
+  $("#ide-fields").hidden = $("#editor").value !== "webstorm";
+};
+$("#editor").addEventListener("change", showIdeFields);
 var isEditor = (v) => v === "vscode" || v === "cursor" || v === "webstorm";
 async function loadSettings() {
   const { settings } = await chrome.storage.local.get("settings");
@@ -2404,18 +2421,25 @@ async function loadSettings() {
     const editor = Reflect.get(settings, "editor");
     const idePort = Reflect.get(settings, "idePort");
     const apiBase = Reflect.get(settings, "apiBase");
+    const roots = Reflect.get(settings, "roots");
+    if (typeof roots === "object" && roots !== null) {
+      for (const [k, v] of Object.entries(roots)) if (typeof v === "string") S.settings.roots[k] = v;
+    }
     if (typeof root === "string") S.settings.root = root;
     if (isEditor(editor)) S.settings.editor = editor;
     if (typeof idePort === "number" && idePort > 0) S.settings.idePort = idePort;
     if (typeof apiBase === "string") S.settings.apiBase = apiBase;
   }
-  input("#root").value = S.settings.root;
+  legacyRoot = S.settings.root;
   $("#editor").value = S.settings.editor;
+  showIdeFields();
   input("#ide-port").value = String(S.settings.idePort || DEFAULT_IDE_PORT);
   input("#api-base").value = S.settings.apiBase;
 }
 function readSettingsForm() {
   S.settings.root = input("#root").value.trim();
+  const k = siteKey();
+  if (k) S.settings.roots[k] = S.settings.root;
   const editor = $("#editor").value;
   if (isEditor(editor)) S.settings.editor = editor;
   S.settings.idePort = Number(input("#ide-port").value) || DEFAULT_IDE_PORT;
@@ -2441,12 +2465,9 @@ $("#ide-test").addEventListener("click", () => {
       status.textContent = `${S.settings.editor} opens through its own URL; no port needed.`;
       return;
     }
-    if (!S.settings.root) {
-      status.textContent = "Set the project folder first.";
-      return;
-    }
     status.textContent = "Checking\u2026";
-    const ok = await openViaIde(`${S.settings.root.replaceAll("\\", "/").replace(/\/$/, "")}/package.json`, 1, 1);
+    const dir = S.settings.root.replaceAll("\\", "/").replace(/\/$/, "");
+    const ok = await openViaIde(dir ? `${dir}/package.json` : "package.json", 1, 1);
     status.textContent = ok ? "WebStorm answered \u2014 links will open there." : `No answer on port ${S.settings.idePort}. Is WebStorm running, with "Allow unsigned requests" on?`;
   })();
 });
@@ -2520,6 +2541,7 @@ async function connect() {
   if (tab?.id == null) return;
   S.tabId = tab.id;
   S.tabUrl = tab.url ?? "";
+  applySiteRoot();
   const snap = await send({ type: "snapshot" });
   if (!snap) {
     renderFramework();

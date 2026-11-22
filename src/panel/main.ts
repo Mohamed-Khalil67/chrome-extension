@@ -111,6 +111,17 @@ function setPicking(onState: boolean): void {
 $('#pick').addEventListener('click', () => { void startPick(); });
 
 // ───────────── settings ─────────────
+// The project folder belongs to a site (localhost:4200 and localhost:5000 are different projects).
+// Settings saved before this existed had one folder: it applies until a site gets its own.
+let legacyRoot = '';
+function siteKey(): string { try { return new URL(S.tabUrl).origin; } catch { return ''; } }
+function applySiteRoot(): void {
+  const k = siteKey();
+  S.settings.root = S.settings.roots[k] ?? (Object.keys(S.settings.roots).length ? '' : legacyRoot);
+  input('#root').value = S.settings.root;
+}
+const showIdeFields = (): void => { $('#ide-fields').hidden = $<HTMLSelectElement>('#editor').value !== 'webstorm'; };
+$('#editor').addEventListener('change', showIdeFields);
 const isEditor = (v: unknown): v is Editor => v === 'vscode' || v === 'cursor' || v === 'webstorm';
 async function loadSettings(): Promise<void> {
   const { settings } = await chrome.storage.local.get('settings');
@@ -119,18 +130,25 @@ async function loadSettings(): Promise<void> {
     const editor: unknown = Reflect.get(settings, 'editor');
     const idePort: unknown = Reflect.get(settings, 'idePort');
     const apiBase: unknown = Reflect.get(settings, 'apiBase');
+    const roots: unknown = Reflect.get(settings, 'roots');
+    if (typeof roots === 'object' && roots !== null) {
+      for (const [k, v] of Object.entries(roots)) if (typeof v === 'string') S.settings.roots[k] = v;
+    }
     if (typeof root === 'string') S.settings.root = root;
     if (isEditor(editor)) S.settings.editor = editor;
     if (typeof idePort === 'number' && idePort > 0) S.settings.idePort = idePort;
     if (typeof apiBase === 'string') S.settings.apiBase = apiBase;
   }
-  input('#root').value = S.settings.root;
+  legacyRoot = S.settings.root;
   $<HTMLSelectElement>('#editor').value = S.settings.editor;
+  showIdeFields();
   input('#ide-port').value = String(S.settings.idePort || DEFAULT_IDE_PORT);
   input('#api-base').value = S.settings.apiBase;
 }
 function readSettingsForm(): void {
   S.settings.root = input('#root').value.trim();
+  const k = siteKey();
+  if (k) S.settings.roots[k] = S.settings.root;
   const editor = $<HTMLSelectElement>('#editor').value;
   if (isEditor(editor)) S.settings.editor = editor;
   S.settings.idePort = Number(input('#ide-port').value) || DEFAULT_IDE_PORT;
@@ -153,9 +171,10 @@ $('#ide-test').addEventListener('click', () => {
     readSettingsForm();
     const status = $('#ide-status');
     if (S.settings.editor !== 'webstorm') { status.textContent = `${S.settings.editor} opens through its own URL; no port needed.`; return; }
-    if (!S.settings.root) { status.textContent = 'Set the project folder first.'; return; }
     status.textContent = 'Checking…';
-    const ok = await openViaIde(`${S.settings.root.replaceAll('\\', '/').replace(/\/$/, '')}/package.json`, 1, 1);
+    // WebStorm takes a path relative to its open project, so a missing folder is fine here.
+    const dir = S.settings.root.replaceAll('\\', '/').replace(/\/$/, '');
+    const ok = await openViaIde(dir ? `${dir}/package.json` : 'package.json', 1, 1);
     status.textContent = ok
       ? 'WebStorm answered — links will open there.'
       : `No answer on port ${S.settings.idePort}. Is WebStorm running, with "Allow unsigned requests" on?`;
@@ -234,6 +253,7 @@ async function connect(): Promise<void> {
   if (tab?.id == null) return;
   S.tabId = tab.id;
   S.tabUrl = tab.url ?? '';
+  applySiteRoot();
   const snap = await send({ type: 'snapshot' });
   if (!snap) { renderFramework(); inspect.render(); void showOffline(); return; }
   $('#offline').hidden = true;

@@ -160,6 +160,7 @@ function layoutHtml(css: CssAnalysis | null): string {
 export const layoutWarnings = (): number => warningsOf(S.selection?.css).filter((w) => w.level !== 'info').length;
 
 // ───────────── DOM hierarchy ─────────────
+let treeOpen = false; // remembered across picks while the panel is open
 // <html> down to the selected element, then its children: the whole chain is
 // walkable, so you can move up to a wrapper or down into a child without
 // re-picking on the page.
@@ -196,11 +197,16 @@ function treeHtml(sel: Selection): string {
   const ancestors = path.slice(0, -1);
   const kids = sel.domChildren;
   const sibs = sel.siblingCount > 1 ? `${sel.siblingIndex + 1} of ${sel.siblingCount}` : 'only child';
+  // Collapsed, it is one line: where the element sits. Open, the whole tree to walk.
+  const crumbs = ancestors.slice(-2).map((n) => esc(nodeLabel(n)));
   return `
-    <section class="dom-tree" aria-label="Element hierarchy">
+    <details class="dom-tree"${treeOpen ? ' open' : ''}>
+      <summary class="dom-sum" title="Show the element hierarchy">
+        <span class="crumbs">${crumbs.length ? `<span class="anc">${ancestors.length > 2 ? '… › ' : ''}${crumbs.join(' › ')} ›</span>` : ''}<b class="cur">${esc(nodeLabel(current))}</b></span>
+        <span class="dim">${current.w}×${current.h}</span>
+      </summary>
       <header class="dom-head">
-        <h3>Hierarchy</h3>
-        <span class="dim">${esc(sibs)} · ${current.w}×${current.h}</span>
+        <span class="dim">${esc(sibs)}</span>
         <span class="spacer"></span>
         <span class="dom-keys dim" aria-hidden="true">↑ parent · ↓ child · ← → sibling</span>
         <button type="button" class="btn tiny ghost" data-act="copy-sel" title="Copy a CSS selector for this element">Copy selector</button>
@@ -212,7 +218,7 @@ function treeHtml(sel: Selection): string {
         ${kids.map((n) => nodeBtn(n, ancestors.length + 1, 'child')).join('')}
       </ol>
       ${current.childCount > kids.length ? `<p class="note">Showing the first ${kids.length} of ${current.childCount} children.</p>` : ''}
-    </section>`;
+    </details>`;
 }
 
 const selectPath = (path: number[]): void => {
@@ -307,6 +313,10 @@ export function init(startPick: () => void): void {
     e.preventDefault();
     selectPath(next);
   });
+  // <details> fires toggle on itself only, so listen in the capture phase.
+  root.addEventListener('toggle', (e) => {
+    if (e.target instanceof HTMLDetailsElement && e.target.matches('.dom-tree')) treeOpen = e.target.open;
+  }, true);
   // Keep the focused row in view after a move.
   root.addEventListener('focusin', (e) => { closest(e, '.dom-node')?.scrollIntoView({ block: 'nearest' }); });
 }

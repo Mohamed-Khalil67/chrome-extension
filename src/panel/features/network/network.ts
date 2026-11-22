@@ -13,7 +13,6 @@ import { send } from '../../core/rpc';
 import { S } from '../../core/state';
 
 type StatusClass = '2xx' | '3xx' | '4xx' | '5xx' | 'failed' | 'aborted' | 'pending';
-const STATUS_CLASSES: StatusClass[] = ['2xx', '3xx', '4xx', '5xx', 'failed'];
 
 // ───────────── which calls are backend API calls ─────────────
 const urlOf = (u: string): URL | null => { try { return new URL(u); } catch { return null; } };
@@ -300,18 +299,12 @@ function refresh(): void {
     prev = tr;
   }
 
-  // Summary + status bar.
-  const counts = new Map<StatusClass, number>(STATUS_CLASSES.map((c) => [c, 0]));
-  for (const n of all) { const c = statusClass(n); counts.set(c, (counts.get(c) ?? 0) + 1); }
-  const sum = STATUS_CLASSES.reduce((a, c) => a + (counts.get(c) ?? 0), 0) || 1;
-  $('#net-bar').innerHTML = STATUS_CLASSES.filter((c) => counts.get(c)).map((c) => `<span class="bar-seg ${c}" style="flex:${(counts.get(c) ?? 0) / sum}" title="${c}: ${counts.get(c) ?? 0}"></span>`).join('');
-  const hosts = [...new Set(all.map((n) => urlOf(n.url)?.host ?? ''))].filter(Boolean);
-  const failed = all.filter((n) => ['4xx', '5xx', 'failed'].includes(statusClass(n))).length;
-  const fromServer = all.filter(isTransfer).length;
-  const what = scope === 'all' ? 'call' : 'API call';
-  $('#net-summary').innerHTML = all.length
-    ? `${visible.length === all.length ? '' : `Showing ${visible.length} of ${all.length}. `}${all.length} ${what}${all.length === 1 ? '' : 's'} to <b>${esc(hosts.slice(0, 2).join(', '))}${hosts.length > 2 ? '…' : ''}</b>${failed ? `, <span class="bad">${failed} failed</span>` : ''}${fromServer ? ` · <span class="dim">${fromServer} fetched by the server while rendering</span>` : ''}${fellBack ? ' · <span class="warn">none matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.</span>' : ''}`
-    : '';
+  // One note, only when the list is not what you'd expect.
+  const note = scope === 'problems'
+    ? `Showing failed calls only. <button type="button" class="link" data-act="show-api">Show all API calls</button>`
+    : fellBack ? 'None of these calls matched your backend, so every call is listed. Set an API base URL in Settings to narrow it down.' : '';
+  $('#net-summary').innerHTML = note;
+  $('#net-summary').hidden = !note;
   // Nothing in the table means nothing was captured at all: when the API
   // heuristic matches none of the captured calls, syncRows lists them all
   // (fellBack) and the summary above says so.
@@ -380,7 +373,8 @@ function serverMessage(n: NetEntry): string {
     const m = /<pre[^>]*>([\s\S]{1,300}?)<\/pre>/i.exec(t) ?? /<h1[^>]*>([\s\S]{1,200}?)<\/h1>/i.exec(t) ?? /<title>([\s\S]{1,200}?)<\/title>/i.exec(t);
     return m?.[1] ? m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
   }
-  return t.length < 200 ? t : '';
+  // An empty JSON body ({} or []) says nothing.
+  return t.length < 200 && !/^(\{\s*\}|\[\s*\])$/.test(t) ? t : '';
 }
 
 // What the code means, what the backend said, and where to look.
@@ -406,6 +400,7 @@ async function meaningHtml(n: NetEntry): Promise<string> {
   // JS errors in the 3 s before this request started (listed in the Console tab).
   const before = [...S.errors.values()].filter((e) => e.kind !== 'http' && e.kind !== 'warn' && e.first <= n.start && n.start - e.first < 3000);
   const isOk = tone === 'ok';
+  const quiet = isOk && !front.length && !msg && !before.length;
   const frontBox = front.length || (!isOk && m.front)
     ? `<div class="box"><h3>Check in the front end</h3>${front.map((p) => `<p><strong>${esc(p.label)}.</strong> ${esc(p.hint)}</p>`).join('')}${!isOk && m.front && !(specific && fromStatus) ? `<p>${esc(m.front)}</p>` : ''}</div>`
     : '';
@@ -415,12 +410,12 @@ async function meaningHtml(n: NetEntry): Promise<string> {
       <li class="${!ah && !isTransfer(n) && n.status === 401 ? 'f-warn' : ''}">${esc(sent)}</li>
       <li class="f-${tone}">${esc(resp)}</li>
     </ol>
-    <div class="meaning ${tone}">
+    ${quiet ? '' : `<div class="meaning ${tone}">
       <p class="m-title"><span class="st pill ${sc}">${n.status ?? '…'}</span> ${esc(m.title)}</p>
       <h3>What the backend is saying</h3>
       <p>${esc(m.backend)}</p>
       ${msg ? `<p class="server-msg"><span>Server message</span> <code>${esc(msg)}</code></p>` : ''}
-    </div>
+    </div>`}
     ${frontBox}
     ${!isOk && m.back ? `<div class="box"><h3>Check in the backend</h3><p>${esc(m.back)}</p></div>` : ''}
     ${before.length ? `<div class="box related"><h3>JS errors just before this request</h3>${before.map((e) => `<button type="button" class="link" data-err-key="${esc(e.key)}">${esc(e.message.slice(0, 90))}</button> <span class="note">${fmtMs(n.start - e.first)} earlier</span>`).join('<br>')}</div>` : ''}`;
@@ -497,7 +492,6 @@ async function renderDetail(id: string, keepTab = false): Promise<void> {
       <div class="actions">
         <button type="button" class="btn small" data-act="to-requests">Open in Requests</button>
         <button type="button" class="btn small" data-copy="curl">Copy as cURL</button>
-        <button type="button" class="btn small" data-copy="fetch">Copy as fetch</button>
         <button type="button" class="btn small" data-copy="response">Copy response</button>
         <span role="status" class="saved"></span>
       </div>
@@ -562,11 +556,12 @@ export function init(): void {
     scheduleRefresh();
   });
 
-  // Measure the sticky filter row so the table head can sit exactly under it:
-  // the row wraps at narrow widths, so its height isn't a constant.
-  const tools = $('.net-tools');
-  const listView = $('#net-list-view');
-  new ResizeObserver(() => { listView.style.setProperty('--tools-h', `${Math.round(tools.getBoundingClientRect().height)}px`); }).observe(tools);
+  $('#net-summary').addEventListener('click', (e) => {
+    if (!closest(e, '[data-act="show-api"]')) return;
+    scope = 'api';
+    setChip($('#net-filter'), 'api');
+    scheduleRefresh();
+  });
 
   $('#net-rows').addEventListener('click', (e) => {
     if (closest(e, '.file-link')) return; // opens the editor instead

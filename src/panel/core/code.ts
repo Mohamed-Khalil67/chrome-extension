@@ -60,7 +60,7 @@ export function snippetHtml(file: string, text: string, line: number, { before =
   const canGrow = from > 1 || to < lines.length;
   return `
     <figure class="code" data-file="${esc(file)}" data-line="${line}" data-tone="${tone}" data-before="${before}" data-after="${after}">
-      <figcaption>${fileLink(file, line, null, label)}${canGrow ? `<button type="button" class="btn tiny ghost" data-grow>${before >= 20 ? 'Show less' : 'Show more'}</button>` : ''}</figcaption>
+      <figcaption>${fileLink(file, line, null, label)}<button type="button" class="btn tiny primary" data-open-file="${esc(file)}" data-line="${line}" data-col="1" title="Open ${esc(file)}:${line} in your editor">Open in editor</button>${canGrow ? `<button type="button" class="btn tiny ghost" data-grow>${before >= 20 ? 'Show less' : 'Show more'}</button>` : ''}</figcaption>
       <div class="lines" role="region" aria-label="Source of ${esc(file)} around line ${line}" tabindex="0">${rows.join('')}</div>
     </figure>`;
 }

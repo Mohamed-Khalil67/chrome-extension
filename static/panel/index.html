@@ -30,19 +30,21 @@
       <h2>Settings</h2>
       <label for="root">Project folder</label>
       <input id="root" name="root" type="text" spellcheck="false" autocomplete="off" placeholder="C:\work\my-app">
-      <p class="help">Used to open files in your editor. The folder that contains <code>src/</code>.</p>
+      <p class="help">Used to open files in your editor, remembered for this site. The folder that contains <code>src/</code>. WebStorm can open files without it.</p>
       <label for="editor">Editor</label>
       <select id="editor" name="editor">
         <option value="vscode">VS Code</option>
         <option value="cursor">Cursor</option>
         <option value="webstorm">WebStorm</option>
       </select>
+      <div id="ide-fields" hidden>
       <label for="ide-port">IDE port</label>
       <input id="ide-port" name="idePort" type="number" min="1" max="65535" inputmode="numeric" placeholder="63342">
       <p class="help">WebStorm's built-in server, <code>63342</code> by default (Settings &rsaquo; Build, Execution, Deployment &rsaquo; Debugger). Turn on <em>Allow unsigned requests</em> there so links open.</p>
       <div class="row">
         <button type="button" class="btn ghost small" id="ide-test">Test editor link</button>
         <span class="saved" id="ide-status" role="status"></span>
+      </div>
       </div>
       <label for="api-base">API base URL</label>
       <input id="api-base" name="apiBase" type="text" spellcheck="false" autocomplete="off" placeholder="https://api.example.com/">
@@ -96,8 +98,7 @@
       <section role="tabpanel" id="panel-network" aria-labelledby="tab-network" hidden>
         <div class="net-stack">
           <div id="net-list-view" class="wrap">
-            <p class="net-summary" id="net-summary"></p>
-            <div class="statbar" id="net-bar" aria-hidden="true"></div>
+            <p class="net-summary" id="net-summary" hidden></p>
             <div class="toolbar net-tools">
               <input type="search" id="net-q" placeholder="Filter by URL, status or file" aria-label="Filter calls">
               <div class="typebar" id="net-filter" role="group" aria-label="Which calls to list">
@@ -107,14 +108,7 @@
               </div>
               <button type="button" class="btn ghost small" id="net-clear">Clear</button>
             </div>
-            <table class="net-table api" id="net-table">
-              <thead>
-                <tr>
-                  <th scope="col" class="c-name">Call and where it's made</th>
-                  <th scope="col" class="c-status">Status</th>
-                  <th scope="col" class="c-time">Time</th>
-                </tr>
-              </thead>
+            <table class="net-table api" id="net-table" aria-label="API calls, newest first">
               <tbody id="net-rows"></tbody>
             </table>
             <p class="empty" id="net-empty">No calls captured yet. Angular Lens records from the moment the page starts, so reload the app if you opened the panel later. Calls show up here with the line of code that made each one.</p>
